@@ -11,7 +11,12 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
+from .config import DATA_DIR
 from .indicators import snapshot
+
+# Keep yfinance's cache inside the project folder instead of the system cache.
+(DATA_DIR / "cache").mkdir(parents=True, exist_ok=True)
+yf.set_tz_cache_location(str(DATA_DIR / "cache"))
 
 OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 

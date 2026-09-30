@@ -26,31 +26,21 @@ How a run works:
 4. If any analyst fails, the run stops with no decision. Otherwise the Portfolio
    Manager reads all three reports and decides.
 
-## Quick start (on your computer)
+## Quick start
 
-Needs Python 3.11 or newer.
+**New here? Follow [SETUP_GUIDE.md](SETUP_GUIDE.md)** for step-by-step
+instructions (Mac and Windows). Everything installs into one `HedgeFund`
+folder on your Desktop.
 
-```bash
-git clone https://github.com/Jakegilbs/Hedge-Fund-.git
-cd Hedge-Fund-
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m pytest -q                # offline tests, no cost
-```
-
-See the data the analysts would get (no AI cost):
+Short version, from inside the project folder:
 
 ```bash
-python -m desk.meet_the_team --data-only
-```
-
-Meet the team (costs about $0.05–0.30 per run):
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # Windows: set ANTHROPIC_API_KEY=sk-ant-...
-python -m desk.meet_the_team                        # scanner picks tickers
-python -m desk.meet_the_team --tickers NVDA,JPM     # force specific tickers
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
+pip install --no-cache-dir -r requirements.txt
+python -m pytest -q                                  # offline tests, no cost
+python -m desk.meet_the_team --data-only             # today's data, no AI cost
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env           # key stays in this folder
+python -m desk.meet_the_team --tickers NVDA,JPM      # meet the team (< $0.30)
 ```
 
 Each run prints every report, the PM's decision and the cost, and saves a full

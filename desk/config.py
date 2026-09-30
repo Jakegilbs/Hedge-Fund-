@@ -1,12 +1,15 @@
 """Loads config/desk.toml into typed settings."""
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config" / "desk.toml"
+ENV_FILE = ROOT / ".env"
+DATA_DIR = ROOT / "data"  # everything the desk saves stays inside the project folder
 ROLES = ("technical_analyst", "catalyst_analyst", "regime_analyst", "portfolio_manager")
 
 
@@ -48,3 +51,21 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         effort=dict(raw.get("effort", {})),
         prompt_versions=dict(raw["prompts"]),
     )
+
+
+def load_env_file(path: Path = ENV_FILE) -> None:
+    """Load KEY=value lines from the project's .env file (git-ignored) into the environment.
+
+    Values already set in the terminal win. Lines starting with # are ignored.
+    """
+    if not path.is_file():
+        return
+    raw = path.read_bytes()
+    # PowerShell's `echo x > .env` writes UTF-16; accept it as well as UTF-8.
+    text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))

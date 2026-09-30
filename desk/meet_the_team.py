@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 from . import market_data
-from .config import ROOT, load_settings
+from .config import DATA_DIR, ROOT, load_env_file, load_settings
 from .llm import ClaudeRunner
 from .team import AccountState, TeamRun, run_team
 
-RUNS_DIR = ROOT / "data" / "runs"
+RUNS_DIR = DATA_DIR / "runs"
 
 
 def _print_run(run: TeamRun) -> None:
@@ -65,6 +66,10 @@ def main() -> None:
     ap.add_argument("--data-only", action="store_true", help="print the data packets and stop (no AI cost)")
     args = ap.parse_args()
 
+    load_env_file()
+    if not args.data_only and not os.environ.get("ANTHROPIC_API_KEY"):
+        raise SystemExit("No API key found. Put ANTHROPIC_API_KEY=sk-ant-... in the .env file "
+                         "in this folder (see SETUP_GUIDE.md, step 6).")
     settings = load_settings()
     equity = args.equity or settings.paper_equity
     account = AccountState(equity=equity, cash=equity)
