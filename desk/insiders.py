@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import time
 import zipfile
 from datetime import date
@@ -26,7 +27,14 @@ import pandas as pd
 
 from .config import DATA_DIR
 
-QUARTER_URL = "https://www.sec.gov/files/structureddata/data/form-345-data-sets/{q}_form345.zip"
+# The SEC's page listing every quarterly file; the real links are read from it.
+LANDING_PAGES = ("https://www.sec.gov/data-research/sec-markets-data/insider-transactions-data-sets",
+                 "https://www.sec.gov/dera/data/form-345")
+# Address patterns tried when a quarter is not linked from the page.
+URL_PATTERNS = ("https://www.sec.gov/files/structureddata/data/insider-transactions-data-sets/{q}_form345.zip",
+                "https://www.sec.gov/files/structureddata/data/form-345-data-sets/{q}_form345.zip",
+                "https://www.sec.gov/files/dera/data/form-345/{q}_form345.zip")
+LINK = re.compile(r"""href=["']([^"']*?(\d{4}q[1-4])_form345\.zip)["']""", re.IGNORECASE)
 CACHE = DATA_DIR / "cache" / "insiders"
 COLUMNS = ["accession", "filing_date", "trans_date", "ticker", "issuer", "issuer_cik", "owner", "owner_cik",
            "relationship", "title", "shares", "price", "value", "owned_after", "direct"]
@@ -102,17 +110,48 @@ def parse_quarter(data: bytes) -> pd.DataFrame:
     return out[out.filing_date.notna() & ~out.ticker.isin(bad)][COLUMNS].reset_index(drop=True)
 
 
-def _download(q: str, ua: str) -> bytes | None:
+def _get(url: str, ua: str, timeout: int = 120) -> bytes | None:
+    """GET a URL; None on 404."""
     import urllib.error
     import urllib.request
-    req = urllib.request.Request(QUARTER_URL.format(q=q), headers={"User-Agent": ua})
+    req = urllib.request.Request(url, headers={"User-Agent": ua, "Accept-Encoding": "identity"})
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return None                                  # not published yet
+            return None
         raise
+
+
+def parse_links(html: str, base: str = "https://www.sec.gov") -> dict[str, str]:
+    """Quarter -> zip URL from the SEC's listing page."""
+    from urllib.parse import urljoin
+    return {m.group(2).lower(): urljoin(base, m.group(1)) for m in LINK.finditer(html)}
+
+
+_links: dict[str, str] | None = None
+
+
+def _download(q: str, ua: str) -> bytes | None:
+    """The quarter's zip: the link on the SEC's page first, then the known address patterns."""
+    global _links
+    if _links is None:
+        _links = {}
+        for page in LANDING_PAGES:
+            try:
+                html = _get(page, ua, timeout=30)
+            except Exception:
+                html = None
+            if html:
+                _links.update(parse_links(html.decode("utf-8", "replace"), page))
+    custom = os.environ.get("SEC_INSIDER_URL", "").strip()     # e.g. https://.../{q}_form345.zip
+    patterns = ([custom] if "{q}" in custom else []) + list(URL_PATTERNS)
+    for url in ([_links[q]] if q in _links else []) + [u.format(q=q) for u in patterns]:
+        data = _get(url, ua)
+        if data and data[:2] == b"PK":                   # a real zip, not an HTML error page
+            return data
+    return None
 
 
 def load_purchases(start_year: int, log=print, download=_download) -> pd.DataFrame:
@@ -124,6 +163,7 @@ def load_purchases(start_year: int, log=print, download=_download) -> pd.DataFra
         log(f"Downloading {len(todo)} quarters of SEC insider filings (each 10-60 MB; the first time "
             f"takes a while, then only new quarters are fetched)...")
         ua = user_agent()
+    not_found = 0
     for n, q in enumerate(todo, 1):
         try:
             data = download(q, ua)
@@ -131,7 +171,16 @@ def load_purchases(start_year: int, log=print, download=_download) -> pd.DataFra
             log(f"  {q}: download failed ({e}); it will be retried next run")
             continue
         if data is None:
-            log(f"  {q}: not published by the SEC yet")
+            not_found += 1
+            if q == qs[-1]:
+                log(f"  {q}: not published by the SEC yet")
+            elif not_found >= 3 and not_found == n:
+                raise SystemExit(
+                    "Could not find the SEC's quarterly insider files at any known address. Open\n"
+                    f"  {LANDING_PAGES[0]}\n"
+                    "in a browser, right-click any quarter's zip link, choose 'Copy Link', and send it to Claude.")
+            else:
+                log(f"  {q}: not found at the SEC")
             continue
         df = parse_quarter(data)
         df.to_csv(CACHE / f"purchases_{q}.csv", index=False, date_format="%Y-%m-%d")

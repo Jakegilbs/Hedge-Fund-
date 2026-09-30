@@ -123,3 +123,22 @@ def test_report_runs():
     text = st.report(ev, locked=True, coverage="Coverage: test")
     for part in ("By how many insiders", "By who bought", "company size", "year by year", "2022+ locked"):
         assert part in text
+
+
+def test_links_are_read_from_the_sec_page():
+    html = """<a href="/files/structureddata/data/insider-transactions-data-sets/2024q1_form345.zip">2024 Q1</a>
+              <a href='https://www.sec.gov/files/x/2016Q3_form345.zip'>2016 Q3</a>"""
+    links = ins.parse_links(html)
+    assert links["2024q1"] == ("https://www.sec.gov/files/structureddata/data/"
+                               "insider-transactions-data-sets/2024q1_form345.zip")
+    assert links["2016q3"].endswith("2016Q3_form345.zip")
+
+
+def test_stops_early_with_instructions_when_nothing_is_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(ins, "CACHE", tmp_path)
+    monkeypatch.setenv("SEC_USER_AGENT", "Test test@example.com")
+    monkeypatch.setattr(ins, "quarters", lambda y: [f"20{y}q{q}" for y in (16, 17) for q in (1, 2, 3, 4)])
+    calls = []
+    with pytest.raises(SystemExit, match="Copy Link"):
+        ins.load_purchases(2016, log=lambda *a: None, download=lambda q, ua: calls.append(q) or None)
+    assert len(calls) == 3
