@@ -2,8 +2,8 @@
 
 Each agent's reply is constrained to one of these models (structured outputs),
 so the Portfolio Manager always receives clean, comparable reports and code can
-reject anything malformed. Range limits (e.g. conviction 1-5) are checked by the
-SDK after the reply arrives; a reply that fails them is treated as no report.
+reject anything malformed. Small integer ranges are written as fixed choices
+(Literal) so the API enforces them while the reply is written, not afterwards.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class TechnicalView(BaseModel):
     data_ok: bool = Field(description="False if data is stale, missing or inconsistent")
     trend: Literal["up", "down", "sideways"]
     setup: Literal["breakout", "pullback", "vcp", "other", "none"]
-    setup_quality: int = Field(ge=1, le=5, description="1 = weak, 5 = textbook")
+    setup_quality: Literal[0, 1, 2, 3, 4, 5] = Field(description="0 = no setup, 1 = weak, 5 = textbook")
     entry: Optional[float] = Field(description="Proposed limit entry price, or null if no trade")
     stop: Optional[float] = Field(description="Price where the setup is proven wrong")
     target: Optional[float] = Field(description="Realistic 2-15 trading day objective")
@@ -58,7 +58,7 @@ class CatalystReport(BaseModel):
 class RegimeReport(BaseModel):
     regime: Literal["risk_on", "neutral", "risk_off"]
     posture: Literal["aggressive", "cautious", "flat"]
-    max_new_positions_today: int = Field(ge=0, le=6)
+    max_new_positions_today: Literal[0, 1, 2, 3, 4, 5, 6]
     evidence: list[str] = Field(description="Specific numbers from the data supporting the call")
     leading_sectors: list[str]
     lagging_sectors: list[str]
@@ -79,7 +79,7 @@ class Order(BaseModel):
     reward_risk: float
     thesis: str
     bear_case: str
-    conviction: int = Field(ge=1, le=5)
+    conviction: Literal[1, 2, 3, 4, 5]
 
 
 class PositionUpdate(BaseModel):

@@ -26,20 +26,22 @@ REPORTS = {
 }
 
 
+SCHEMA_BY_TITLE = {m.__name__: m for m in REPORTS}
+
+
 class FakeMessages:
     def __init__(self, fail_schema=None, stop_reason="end_turn"):
         self.calls = []
         self.fail_schema = fail_schema
         self.stop_reason = stop_reason
 
-    def parse(self, **kw):
-        self.calls.append(kw)
-        schema = kw["output_format"]
-        if schema is self.fail_schema:
-            raise ValueError("schema validation failed")
-        return SimpleNamespace(model=kw["model"], stop_reason=self.stop_reason,
+    def create(self, **kw):
+        schema = SCHEMA_BY_TITLE[kw["output_config"]["format"]["schema"]["title"]]
+        self.calls.append({**kw, "schema": schema})
+        text = '{"not": "valid"}' if schema is self.fail_schema else REPORTS[schema].model_dump_json()
+        return SimpleNamespace(model=kw["model"] + "-20251001", stop_reason=self.stop_reason,
                                usage=SimpleNamespace(input_tokens=1000, output_tokens=200),
-                               parsed_output=REPORTS[schema])
+                               content=[SimpleNamespace(type="text", text=text)])
 
 
 def fake_runner(**kw):
@@ -58,11 +60,11 @@ def test_full_run_calls_three_analysts_then_pm(bars):
                    time_et="2026-09-29 10:00")
     assert run.candidates == ["NVDA"]
     assert run.stopped_reason is None and run.pm.ok
-    roles = [c["output_format"].__name__ for c in msgs.calls]
+    roles = [c["schema"].__name__ for c in msgs.calls]
     assert sorted(roles[:3]) == ["CatalystReport", "RegimeReport", "TechnicalReport"] and roles[3] == "PMDecision"
     pm_call = msgs.calls[3]
     assert pm_call["model"] == "claude-opus-5-5" and pm_call["fallbacks"] == "default"
-    assert pm_call["output_config"] == {"effort": "high"}
+    assert pm_call["output_config"]["effort"] == "high"
     assert "$100.00" in pm_call["messages"][0]["content"]
     assert run.total_cost_usd > 0
     assert run.gate is not None and run.gate.approved == []
@@ -73,7 +75,7 @@ def test_haiku_analysts_get_no_effort_or_fallback(bars):
     run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     haiku = [c for c in msgs.calls if c["model"] == "claude-haiku-4-5"]
     assert len(haiku) == 3
-    assert all("fallbacks" not in c and "output_config" not in c for c in haiku)
+    assert all("fallbacks" not in c and "effort" not in c["output_config"] for c in haiku)
 
 
 def test_quiet_day_costs_nothing(bars):
@@ -83,11 +85,12 @@ def test_quiet_day_costs_nothing(bars):
     assert run.stopped_reason.startswith("quiet day") and msgs.calls == []
 
 
-def test_failed_analyst_stops_before_pm(bars):
+def test_failed_analyst_stops_before_pm_but_cost_is_counted(bars):
     runner, msgs = fake_runner(fail_schema=RegimeReport)
     run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     assert run.pm is None and "regime_analyst" in run.stopped_reason
-    assert all(c["output_format"] is not PMDecision for c in msgs.calls)
+    assert run.analysts["regime_analyst"].cost_usd > 0
+    assert all(c["schema"] is not PMDecision for c in msgs.calls)
 
 
 def test_cut_off_reply_is_rejected(bars):
@@ -105,6 +108,15 @@ def test_tickers_outside_allowlist_rejected(bars):
 def test_cost_math():
     assert cost_usd("claude-haiku-4-5", 1_000_000, 0) == 1.0
     assert cost_usd("claude-opus-5-5", 0, 1_000_000) == 20.0
+    assert cost_usd("claude-haiku-4-5-20251001", 1_000_000, 0) == 1.0
+
+
+def test_small_ranges_are_enforced_by_the_schema_itself():
+    import anthropic
+    from desk.schemas import TechnicalReport
+    schema = anthropic.transform_schema(TechnicalReport.model_json_schema())
+    view = schema["$defs"]["TechnicalView"]["properties"]["setup_quality"]
+    assert view["enum"] == [0, 1, 2, 3, 4, 5]
 
 
 def test_account_file_or_paper(tmp_path):
