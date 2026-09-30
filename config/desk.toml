@@ -1,0 +1,45 @@
+# Hedge Fund desk configuration.
+# Everything here is read by code. The AI agents never see or change this file.
+
+[account]
+# Paper account used by `meet_the_team` until Robinhood is connected.
+paper_equity = 100.0
+
+[universe]
+# Only these tickers can ever be analysed or traded.
+allowlist = [
+  "SPY", "QQQ", "IWM",                 # broad market ETFs
+  "XLK", "XLF", "XLE", "XLV", "XLI",   # sector ETFs
+  "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM",
+]
+# Used by the Market Regime Analyst only (never traded).
+regime_symbols = ["SPY", "QQQ", "IWM", "^VIX", "^TNX", "TLT"]
+sector_etfs = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC"]
+
+[risk]
+# Enforced by the Gatekeeper (next build step). Shown to the Portfolio Manager.
+risk_per_trade = 0.01        # 1% of equity from entry to stop
+max_position_pct = 0.15      # 15% of equity per position
+max_open_positions = 6
+min_reward_risk = 2.0
+daily_halt_pct = -0.03       # no new entries after -3% on the day
+weekly_halt_pct = -0.06
+max_drawdown_pct = -0.15
+
+[models]
+# One model per role. Analysts run on the cheapest model; the PM decides on Opus.
+technical_analyst = "claude-haiku-4-5"
+catalyst_analyst = "claude-haiku-4-5"
+regime_analyst = "claude-haiku-4-5"
+portfolio_manager = "claude-opus-5-5"
+
+[effort]
+# Only models that support the effort setting use it (not Haiku 4.5).
+portfolio_manager = "high"
+
+[prompts]
+# Prompt version per role: prompts/<role>/<version>.md
+technical_analyst = "v1"
+catalyst_analyst = "v1"
+regime_analyst = "v1"
+portfolio_manager = "v1"

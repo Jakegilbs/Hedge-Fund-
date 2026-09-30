@@ -1,0 +1,106 @@
+"""Team pipeline tests with a fake Claude client: no network, no API cost."""
+from types import SimpleNamespace
+
+import pytest
+
+from desk.config import load_settings
+from desk.llm import ClaudeRunner, cost_usd
+from desk.schemas import (CatalystReport, CatalystView, PMDecision, RegimeReport, TechnicalReport,
+                          TechnicalView)
+from desk.team import AccountState, run_team
+
+REPORTS = {
+    TechnicalReport: TechnicalReport(views=[TechnicalView(
+        ticker="NVDA", data_ok=True, trend="up", setup="breakout", setup_quality=4, entry=110.0,
+        stop=105.0, target=122.0, key_levels=["105 base"], evidence="New high on 2x volume.",
+        risks="Close back inside base.", recommendation="candidate")], warnings=[]),
+    CatalystReport: CatalystReport(views=[CatalystView(
+        ticker="NVDA", data_ok=True, next_earnings=None, days_to_earnings=None, event_risk="low",
+        sentiment="neutral", catalysts=[], red_flags=["earnings date unknown"], summary="Quiet.")],
+        warnings=[]),
+    RegimeReport: RegimeReport(regime="neutral", posture="cautious", max_new_positions_today=1,
+                               evidence=["SPY above ema50"], leading_sectors=["XLK"], lagging_sectors=["XLE"],
+                               summary="Mixed.", warnings=[]),
+    PMDecision: PMDecision(market_view="Cautious.", orders=[], position_updates=[], warnings=[],
+                           honest_assessment="First run."),
+}
+
+
+class FakeMessages:
+    def __init__(self, fail_schema=None, stop_reason="end_turn"):
+        self.calls = []
+        self.fail_schema = fail_schema
+        self.stop_reason = stop_reason
+
+    def parse(self, **kw):
+        self.calls.append(kw)
+        schema = kw["output_format"]
+        if schema is self.fail_schema:
+            raise ValueError("schema validation failed")
+        return SimpleNamespace(model=kw["model"], stop_reason=self.stop_reason,
+                               usage=SimpleNamespace(input_tokens=1000, output_tokens=200),
+                               parsed_output=REPORTS[schema])
+
+
+def fake_runner(**kw):
+    messages = FakeMessages(**kw)
+    return ClaudeRunner(client=SimpleNamespace(beta=SimpleNamespace(messages=messages))), messages
+
+
+def no_news(tickers):
+    return {"today": "2026-09-29", "tickers": {t: {"next_earnings": None, "headlines": [], "errors": []}
+                                                for t in tickers}}
+
+
+def test_full_run_calls_three_analysts_then_pm(bars):
+    runner, msgs = fake_runner()
+    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news,
+                   time_et="2026-09-29 10:00")
+    assert run.candidates == ["NVDA"]
+    assert run.stopped_reason is None and run.pm.ok
+    roles = [c["output_format"].__name__ for c in msgs.calls]
+    assert sorted(roles[:3]) == ["CatalystReport", "RegimeReport", "TechnicalReport"] and roles[3] == "PMDecision"
+    pm_call = msgs.calls[3]
+    assert pm_call["model"] == "claude-opus-5-5" and pm_call["fallbacks"] == "default"
+    assert pm_call["output_config"] == {"effort": "high"}
+    assert "$100.00" in pm_call["messages"][0]["content"]
+    assert run.total_cost_usd > 0
+
+
+def test_haiku_analysts_get_no_effort_or_fallback(bars):
+    runner, msgs = fake_runner()
+    run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    haiku = [c for c in msgs.calls if c["model"] == "claude-haiku-4-5"]
+    assert len(haiku) == 3
+    assert all("fallbacks" not in c and "output_config" not in c for c in haiku)
+
+
+def test_quiet_day_costs_nothing(bars):
+    runner, msgs = fake_runner()
+    bars = {k: v for k, v in bars.items() if k != "NVDA"}
+    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    assert run.stopped_reason.startswith("quiet day") and msgs.calls == []
+
+
+def test_failed_analyst_stops_before_pm(bars):
+    runner, msgs = fake_runner(fail_schema=RegimeReport)
+    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    assert run.pm is None and "regime_analyst" in run.stopped_reason
+    assert all(c["output_format"] is not PMDecision for c in msgs.calls)
+
+
+def test_cut_off_reply_is_rejected(bars):
+    runner, _ = fake_runner(stop_reason="max_tokens")
+    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    assert run.pm is None and "max_tokens" in run.stopped_reason
+
+
+def test_tickers_outside_allowlist_rejected(bars):
+    runner, _ = fake_runner()
+    with pytest.raises(ValueError):
+        run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news, tickers=["GME"])
+
+
+def test_cost_math():
+    assert cost_usd("claude-haiku-4-5", 1_000_000, 0) == 1.0
+    assert cost_usd("claude-opus-5-5", 0, 1_000_000) == 20.0
