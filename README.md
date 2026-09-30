@@ -4,8 +4,10 @@ An AI analyst team that swing-trades (2–15 day holds) a small Robinhood Agenti
 account. Three analysts research, a portfolio manager decides, and code (not AI)
 enforces every risk limit.
 
-**Status: Step 2 of the build.** The analyst team runs on real market data and
-prints its reports and decisions. It cannot place orders yet.
+**Status: Level 1 (you approve and place every trade).** The analyst team runs
+on real market data, the Gatekeeper checks and sizes every order, and you place
+the approved orders yourself in Robinhood (SETUP_GUIDE.md, Step 8). Automatic
+order placement comes later.
 
 ## The team
 
@@ -64,6 +66,7 @@ desk/scanner.py         picks which tickers the analysts look at
 desk/schemas.py         report format for each team member
 desk/llm.py             one Claude call per agent, with cost tracking
 desk/team.py            runs the team, fail-safe
+desk/gatekeeper.py      recomputes sizes, enforces every limit
 desk/meet_the_team.py   command-line entry point
 tests/                  offline tests with a fake Claude client
 ```
@@ -77,6 +80,6 @@ tests/                  offline tests with a fake Claude client
 
 ## Next steps
 
-1. Gatekeeper: recompute shares and reward-to-risk, enforce limits and circuit breakers.
-2. Trade journal and paper trading with a simulated $100 account.
-3. Robinhood MCP connection (read-only first) and the n8n workflow.
+1. Trade journal, weekly halt and drawdown stop (need trade history).
+2. Robinhood MCP connection (read-only first), then the Executor and Monitor.
+3. n8n workflow and phone alerts.

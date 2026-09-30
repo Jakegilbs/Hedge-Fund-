@@ -1,0 +1,17 @@
+# Copy this file to data/account.toml (data/ is private and never uploaded)
+# and keep it up to date with your Robinhood Agentic account after each trade.
+# While data/account.toml does not exist, the team uses a $100 paper account.
+
+equity = 100.00      # total account value
+cash = 100.00        # settled cash available to buy
+pnl_today = 0.00     # today's profit or loss in dollars
+
+# One block per open position. Delete the example block when you hold nothing.
+[[positions]]
+ticker = "NVDA"
+shares = 0.15
+entry = 100.00
+stop = 95.00
+target = 112.00
+opened = "2026-10-01"
+thesis = "Breakout above the base on 2x volume."

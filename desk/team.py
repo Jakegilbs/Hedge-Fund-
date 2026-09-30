@@ -12,7 +12,7 @@ from typing import Callable
 
 import pandas as pd
 
-from . import market_data
+from . import gatekeeper, market_data
 from .config import Settings
 from .llm import AgentResult, ClaudeRunner
 from .prompts import load_prompt
@@ -35,6 +35,24 @@ class AccountState:
     def held(self) -> list[str]:
         return [p["ticker"] for p in self.positions]
 
+    @property
+    def shares_by_ticker(self) -> dict[str, float]:
+        return {p["ticker"].upper(): float(p["shares"]) for p in self.positions}
+
+
+def load_account(path, paper_equity: float) -> AccountState:
+    """Your real account from data/account.toml, or a paper account if the file is absent."""
+    import tomllib
+    from pathlib import Path
+
+    path = Path(path)
+    if not path.is_file():
+        return AccountState(equity=paper_equity, cash=paper_equity)
+    raw = tomllib.loads(path.read_text())
+    positions = [dict(p, ticker=str(p["ticker"]).upper()) for p in raw.get("positions", [])]
+    return AccountState(equity=float(raw["equity"]), cash=float(raw["cash"]),
+                        pnl_today=float(raw.get("pnl_today", 0.0)), positions=positions)
+
 
 @dataclass
 class TeamRun:
@@ -42,6 +60,7 @@ class TeamRun:
     candidates: list[str]
     analysts: dict[str, AgentResult] = field(default_factory=dict)
     pm: AgentResult | None = None
+    gate: gatekeeper.GateResult | None = None
     stopped_reason: str | None = None
     data: dict = field(default_factory=dict)
 
@@ -131,4 +150,15 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
                         effort=settings.effort.get("portfolio_manager"), max_tokens=PM_MAX_TOKENS)
     if not run.pm.ok:
         run.stopped_reason = f"PM decision unusable, no trades: {run.pm.error}"
+        return run
+
+    snaps = tech_all["tickers"]
+    run.gate = gatekeeper.check(
+        run.pm.report, equity=account.equity, cash=account.cash, pnl_today=account.pnl_today,
+        positions=account.shares_by_ticker,
+        last_prices={t: s["close"] for t, s in snaps.items() if s["close"] is not None},
+        stale={t for t, s in snaps.items() if s.get("stale")},
+        allowlist=set(allow), risk=risk,
+        regime=run.analysts["regime_analyst"].report,
+        catalysts=run.analysts["catalyst_analyst"].report)
     return run

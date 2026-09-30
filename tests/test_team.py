@@ -65,6 +65,7 @@ def test_full_run_calls_three_analysts_then_pm(bars):
     assert pm_call["output_config"] == {"effort": "high"}
     assert "$100.00" in pm_call["messages"][0]["content"]
     assert run.total_cost_usd > 0
+    assert run.gate is not None and run.gate.approved == []
 
 
 def test_haiku_analysts_get_no_effort_or_fallback(bars):
@@ -104,3 +105,12 @@ def test_tickers_outside_allowlist_rejected(bars):
 def test_cost_math():
     assert cost_usd("claude-haiku-4-5", 1_000_000, 0) == 1.0
     assert cost_usd("claude-opus-5-5", 0, 1_000_000) == 20.0
+
+
+def test_account_file_or_paper(tmp_path):
+    from desk.team import load_account
+    assert load_account(tmp_path / "missing.toml", 100).equity == 100
+    f = tmp_path / "account.toml"
+    f.write_text('equity = 101.5\ncash = 86.5\n[[positions]]\nticker = "nvda"\nshares = 0.15\n')
+    acct = load_account(f, 100)
+    assert acct.cash == 86.5 and acct.shares_by_ticker == {"NVDA": 0.15}

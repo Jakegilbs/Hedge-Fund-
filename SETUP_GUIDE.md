@@ -13,6 +13,7 @@ Desktop/
     ├── .env                   your Anthropic API key (private, never uploaded)
     ├── .venv/                 the project's own Python packages
     ├── data/
+    │   ├── account.toml       your real balance and positions (you edit this)
     │   ├── runs/              a saved record of every team run
     │   └── cache/             downloaded market-data cache
     ├── config/desk.toml       allowlist, risk limits, models
@@ -108,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect **21 passed**. Then look at today's market data (no AI, no cost):
+Expect a line like **34 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -147,12 +148,45 @@ no setups. You will see, in order:
 2. News / Catalyst Analyst report
 3. Market Regime Analyst report
 4. Portfolio Manager decision
-5. Total cost (expect under $0.30)
+5. Gatekeeper: rejected orders with reasons, and APPROVED ORDERS with exact
+   share counts
+6. Total cost (expect under $0.30)
 
 A full record is saved to `HedgeFund/data/runs/`.
 
 Without `--tickers`, the scanner decides. On a quiet day it stops before any AI
 call and costs nothing.
+
+## Step 8: Trading live, with you approving (Level 1)
+
+Until the Robinhood connection is built, you are the executor. Each trading
+morning after 10:00 ET:
+
+1. Run the team: `python -m desk.meet_the_team`
+2. Read the **APPROVED ORDERS**. Only orders listed there may be placed; never
+   place a REJECTED one or change the numbers upward.
+3. If you agree with a BUY, in the Robinhood app open your **Agentic account**,
+   choose the stock, **Buy → Limit order**, and enter the exact share amount and
+   limit price. Choose good for day.
+4. When it fills, place the **stop**: **Sell → Stop loss order** at the stop price
+   for the same shares, good till canceled. If the app will not accept a stop on
+   fractional shares, write the stop down and check the price each afternoon;
+   sell if it closes below.
+5. For a SELL, sell all shares of that ticker and cancel its stop order.
+6. Tell the team what you hold. Once you fund the account, copy the example
+   file and edit it after every trade:
+
+   ```bash
+   cp config/account.example.toml data/account.toml
+   open -e data/account.toml
+   ```
+
+   Set equity and cash to what the app shows, and list each open position with
+   its entry, stop and target. The team then reviews your positions every run.
+   This file stays in `HedgeFund/data/` and is never uploaded.
+
+Skipping a trade is always allowed. The Gatekeeper already sized every order so
+a stopped-out trade loses about 1% of the account ($1 on $100).
 
 ---
 

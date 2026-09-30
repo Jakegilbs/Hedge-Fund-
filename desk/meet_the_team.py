@@ -9,15 +9,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
 from . import market_data
 from .config import DATA_DIR, ROOT, load_env_file, load_settings
 from .llm import ClaudeRunner
-from .team import AccountState, TeamRun, run_team
+from .team import TeamRun, load_account, run_team
 
 RUNS_DIR = DATA_DIR / "runs"
+ACCOUNT_FILE = DATA_DIR / "account.toml"
 
 
 def _print_run(run: TeamRun) -> None:
@@ -31,12 +33,30 @@ def _print_run(run: TeamRun) -> None:
         a = run.pm
         print(f"\n--- Portfolio Manager  [{a.model_served or a.model_requested}, prompt {a.prompt_version}, ${a.cost_usd:.4f}]")
         print(json.dumps(a.report.model_dump(), indent=2) if a.report else f"FAILED: {a.error}")
-        if a.report and a.report.orders:
-            print("\nNOTE: share counts and reward-to-risk above are the PM's own math."
-                  " The Gatekeeper (next build step) will recompute and enforce them.")
+    if run.gate:
+        _print_gate(run.gate)
     if run.stopped_reason:
         print(f"\nSTOPPED: {run.stopped_reason}")
     print(f"\nTotal AI cost this run: ${run.total_cost_usd:.4f}")
+
+
+def _print_gate(gate) -> None:
+    print("\n--- Gatekeeper (code: recomputed sizes, enforced limits)")
+    if gate.halted:
+        print(f"HALT: {gate.halted}")
+    for r in gate.rejected:
+        print(f"REJECTED {r.action.upper()} {r.ticker}: " + "; ".join(r.reasons))
+    if not gate.approved:
+        print("No approved orders. Nothing to do today.")
+        return
+    print("\nAPPROVED ORDERS (place these yourself in the Robinhood Agentic account):")
+    for o in gate.approved:
+        if o.action == "buy":
+            print(f"  BUY  {o.ticker}: {o.shares} shares, LIMIT ${o.limit_price:.2f} (${o.notional_usd:.2f})\n"
+                  f"       then set STOP ${o.stop_price:.2f}; target ${o.target_price:.2f}; "
+                  f"reward-to-risk {o.reward_risk}; max loss ${o.risk_usd:.2f}")
+        else:
+            print(f"  SELL {o.ticker}: all {o.shares} shares (last price ${o.limit_price:.2f})")
 
 
 def _save(run: TeamRun) -> Path:
@@ -53,6 +73,7 @@ def _save(run: TeamRun) -> Path:
             "input_tokens": a.input_tokens, "output_tokens": a.output_tokens, "cost_usd": a.cost_usd,
             "error": a.error, "report": a.report.model_dump() if a.report else None,
         } for a in run.agents],
+        "gate": asdict(run.gate) if run.gate else None,
         "data": run.data,
     }
     path.write_text(json.dumps(record, indent=2, default=str))
@@ -71,8 +92,10 @@ def main() -> None:
         raise SystemExit("No API key found. Put ANTHROPIC_API_KEY=sk-ant-... in the .env file "
                          "in this folder (see SETUP_GUIDE.md, step 6).")
     settings = load_settings()
-    equity = args.equity or settings.paper_equity
-    account = AccountState(equity=equity, cash=equity)
+    account = load_account(ACCOUNT_FILE, args.equity or settings.paper_equity)
+    source = "data/account.toml" if ACCOUNT_FILE.is_file() else "paper account"
+    print(f"Account ({source}): equity ${account.equity:.2f}, cash ${account.cash:.2f}, "
+          f"positions: {', '.join(account.held) or 'none'}")
     tickers = [t.strip() for t in args.tickers.split(",")] if args.tickers else None
 
     symbols = sorted(set(settings.allowlist) | set(settings.regime_symbols) | set(settings.sector_etfs))
