@@ -175,7 +175,46 @@ def test_options_universe_adds_cheap_names_and_lower_price_floor(monkeypatch):
     from dataclasses import replace
     from desk import universe
     monkeypatch.setattr(universe, "sp500_symbols", lambda: ["AAPL"])
+    monkeypatch.setattr(universe, "cheap_nasdaq", lambda settings, log=print: ["CHEAPQ"])
     s = load_settings()
+    assert "CHEAPQ" in universe.load_universe(s)
     assert "SOFI" in universe.load_universe(s) and s.scan_min_price == 5.0
     stock = replace(s, instrument="stock")
     assert "SOFI" not in universe.load_universe(stock) and stock.scan_min_price == stock.min_price
+
+
+NASDAQ_FILE = """Symbol|Security Name|Market Category|Test Issue|Financial Status|Round Lot Size|ETF|NextShares
+SOFI|SoFi Technologies, Inc. - Common Stock|Q|N|N|100|N|N
+TQQQ|ProShares UltraPro QQQ|G|N|N|100|Y|N
+ZZZW|Some Co - Warrant|G|N|N|100|N|N
+TINY|Tiny Corp - Common Stock|S|N|N|100|N|N
+TEST|Test Issue Corp - Common Stock|Q|Y|N|100|N|N
+PLUG|Plug Power, Inc. - Common Stock|G|N|N|100|N|N
+File Creation Time: 1001202612:00|||||||"""
+
+
+def test_nasdaq_file_keeps_only_common_stocks_on_main_tiers():
+    from desk.universe import parse_nasdaq_listed
+    assert parse_nasdaq_listed(NASDAQ_FILE) == ["PLUG", "SOFI"]
+
+
+def test_cheap_screen_price_band_and_liquidity():
+    from desk.universe import screen_cheap
+    from .conftest import make_bars
+    fake = {"CHEAP": make_bars(n=22, start=12.0, drift=0, seed=1),
+            "PRICEY": make_bars(n=22, start=150.0, drift=0, seed=2),
+            "THIN": make_bars(n=22, start=12.0, drift=0, seed=3).assign(Volume=1000.0)}
+    kept = screen_cheap(list(fake), 5, 30, 5_000_000, fetch=lambda syms: {s: fake[s] for s in syms},
+                        pause=0, log=lambda *a: None)
+    assert kept == ["CHEAP"]
+
+
+def test_cheap_nasdaq_uses_weekly_cache(tmp_path, monkeypatch):
+    from desk import universe
+    monkeypatch.setattr(universe, "NASDAQ_CHEAP_CACHE", tmp_path / "cheap.csv")
+    monkeypatch.setattr(universe, "nasdaq_symbols", lambda: ["AAA", "BBB"])
+    calls = []
+    monkeypatch.setattr(universe, "screen_cheap", lambda syms, *a, **k: calls.append(syms) or ["AAA"])
+    s = load_settings()
+    assert universe.cheap_nasdaq(s, log=lambda *a: None) == ["AAA"]
+    assert universe.cheap_nasdaq(s, log=lambda *a: None) == ["AAA"] and len(calls) == 1

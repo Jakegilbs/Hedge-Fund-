@@ -49,11 +49,20 @@ class Settings:
     instrument: str = "stock"            # "stock" or "options" (long calls and puts only)
     options_extra: tuple[str, ...] = ()
     options_min_price: float = 5.0
+    options_min_dollar_volume: float = 20_000_000
+    include_nasdaq_cheap: bool = False
+    nasdaq_min_price: float = 5.0
+    nasdaq_max_price: float = 30.0
+    nasdaq_min_dollar_volume: float = 20_000_000
     options: "OptionsConfig" = None      # set by load_settings
 
     @property
     def scan_min_price(self) -> float:
         return self.options_min_price if self.instrument == "options" else self.min_price
+
+    @property
+    def scan_min_dollar_volume(self) -> float:
+        return self.options_min_dollar_volume if self.instrument == "options" else self.min_dollar_volume
 
     @property
     def etfs(self) -> set[str]:
@@ -87,6 +96,11 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         instrument=str(raw.get("strategy", {}).get("instrument", "stock")),
         options_extra=tuple(t.upper() for t in raw["universe"].get("options_extra", [])),
         options_min_price=float(raw["universe"].get("options_min_price", 5.0)),
+        options_min_dollar_volume=float(raw["universe"].get("options_min_dollar_volume", 20_000_000)),
+        include_nasdaq_cheap=bool(raw["universe"].get("include_nasdaq_cheap", False)),
+        nasdaq_min_price=float(raw["universe"].get("nasdaq_min_price", 5.0)),
+        nasdaq_max_price=float(raw["universe"].get("nasdaq_max_price", 30.0)),
+        nasdaq_min_dollar_volume=float(raw["universe"].get("nasdaq_min_dollar_volume", 20_000_000)),
         options=OptionsConfig(**raw.get("options", {})),
     )
 

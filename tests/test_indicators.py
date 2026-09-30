@@ -128,3 +128,11 @@ def test_bearish_breakdown_setup_detected():
     df.iloc[-1, df.columns.get_loc("Volume")] = df["Volume"].iloc[-21:-1].mean() * 2
     hit = setup_breakdown(df)
     assert hit and hit["direction"] == "bearish" and hit["stop"] > hit["entry"]
+
+
+def test_upside_weight_favours_bigger_movers():
+    calm = {**_snap(10), "rsi14": 55.0, "atr_pct": 1.5}
+    wild = {**_snap(8), "rsi14": 55.0, "atr_pct": 5.0}
+    snaps = {"CALM": calm, "WILD": wild}
+    assert pick_candidates(snaps, held=[], max_candidates=1).candidates == ["CALM"]
+    assert pick_candidates(snaps, held=[], max_candidates=1, upside_weight=3.0).candidates == ["WILD"]

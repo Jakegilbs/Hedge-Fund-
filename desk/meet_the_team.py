@@ -18,7 +18,7 @@ from . import market_data
 from .config import DATA_DIR, ROOT, load_env_file, load_settings
 from .llm import ClaudeRunner
 from .scanner import pick_candidates
-from .team import TeamRun, load_account, options_affordable, run_team
+from .team import UPSIDE_WEIGHT, TeamRun, load_account, options_affordable, run_team
 from .universe import load_universe
 
 RUNS_DIR = DATA_DIR / "runs"
@@ -155,10 +155,11 @@ def main() -> None:
         ref = str(done["SPY"].index[-1].date()) if "SPY" in done else None
         tech = market_data.technical_packet(done, universe, ref, live)
         scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
-                               settings.scan_min_price, settings.min_dollar_volume,
+                               settings.scan_min_price, settings.scan_min_dollar_volume,
                                directions=("bullish", "bearish") if settings.instrument == "options"
                                else ("bullish",),
-                               affordable=options_affordable(settings, account.cash))
+                               affordable=options_affordable(settings, account.cash),
+                               upside_weight=UPSIDE_WEIGHT if settings.instrument == "options" else 0.0)
         print(json.dumps(market_data.regime_packet(
             bars, list(settings.regime_symbols), list(settings.sector_etfs), universe), indent=1, default=str))
         _print_scan(scan, len(universe), sum(1 for t in universe if t in bars))

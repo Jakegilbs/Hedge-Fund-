@@ -22,6 +22,7 @@ from .scanner import ScanResult, pick_candidates
 from .schemas import CatalystReport, OptionsDecision, PMDecision, RegimeReport, TechnicalReport
 
 ANALYST_MAX_TOKENS = 8000
+UPSIDE_WEIGHT = 3.0   # options mode: ranking points per 1% of average daily range
 PM_MAX_TOKENS = 16000
 
 
@@ -142,8 +143,9 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     else:
         directions = ("bullish", "bearish") if settings.instrument == "options" else ("bullish",)
         scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
-                               settings.scan_min_price, settings.min_dollar_volume, directions=directions,
-                               affordable=options_affordable(settings, account.cash))
+                               settings.scan_min_price, settings.scan_min_dollar_volume, directions=directions,
+                               affordable=options_affordable(settings, account.cash),
+                               upside_weight=UPSIDE_WEIGHT if settings.instrument == "options" else 0.0)
         candidates = scan.candidates
 
     run = TeamRun(time_et=time_et, candidates=candidates, scan=scan)

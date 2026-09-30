@@ -25,8 +25,11 @@ order placement comes later.
 
 How a run works:
 
-1. Code downloads daily prices for the whole universe (S&P 500 plus core ETFs,
-   about 510 tickers) and computes indicators and setups (free).
+1. Code downloads daily prices for the whole universe and computes indicators
+   and setups (free). The universe is the S&P 500 and core ETFs; in options mode
+   it also includes cheap, liquid Nasdaq stocks ($5-30, $20M+ a day, screened
+   weekly from Nasdaq's full symbol list) and a list of popular cheap optionable
+   names, and skips stocks whose options the account cannot afford.
 2. The scanner keeps tickers with a fresh setup that pass the liquidity filter,
    ranks them by strength relative to SPY, and sends only the top 5 (plus any open
    positions) to the analysts. None means a quiet day and **no AI cost**.
@@ -69,7 +72,7 @@ config/desk.toml        allowlist, risk limits, model and prompt version per rol
 prompts/                versioned prompts for each team member
 desk/indicators.py      indicators and setups (breakout, pullback, VCP)
 desk/market_data.py     price, news and earnings data (yfinance)
-desk/universe.py        S&P 500 list (cached weekly) plus the core list
+desk/universe.py        S&P 500 + weekly cheap-Nasdaq screen (cached) plus the core list
 desk/scanner.py         ranks setups and picks which tickers the analysts see
 desk/schemas.py         report format for each team member
 desk/llm.py             one Claude call per agent, with cost tracking

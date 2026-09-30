@@ -59,10 +59,12 @@ def _problem(s: dict, direction: str) -> str | None:
 def pick_candidates(tech_snapshots: dict[str, dict], held: list[str], max_candidates: int = 8,
                     min_price: float = 0.0, min_dollar_volume: float = 0.0,
                     benchmark: str = "SPY", directions: tuple[str, ...] = ("bullish",),
-                    affordable=None) -> ScanResult:
+                    affordable=None, upside_weight: float = 0.0) -> ScanResult:
     """A stale ticker is never a new candidate; a stale held position is still
     reviewed so the PM can see and flag the data problem. `affordable(snapshot)`,
-    when given (options mode), drops tickers whose options the account cannot buy."""
+    when given (options mode), drops tickers whose options the account cannot buy.
+    `upside_weight` (options mode) adds points per 1% of average daily range, so
+    stocks that move more rank higher: a bigger stock move is a bigger option move."""
     result = ScanResult(candidates=[], scanned=len(tech_snapshots))
     bench = (tech_snapshots.get(benchmark) or {}).get("change_pct", {})
     pools: dict[str, dict[str, list[str]]] = {d: {"setup": [], "trend": []} for d in directions}
@@ -106,8 +108,11 @@ def pick_candidates(tech_snapshots: dict[str, dict], held: list[str], max_candid
     def ranked(direction: str, kind: str) -> list[str]:
         sign = 1 if direction == "bullish" else -1   # bearish: weakest first
         names = [t for t in pools[direction][kind] if t not in held]
-        return sorted(names, key=lambda t: (sign * _relative(tech_snapshots[t], bench),
-                                            len(tech_snapshots[t]["setups"])), reverse=True)
+        def score(t: str) -> tuple:
+            snap = tech_snapshots[t]
+            upside = upside_weight * (snap.get("atr_pct") or 0.0)
+            return (sign * _relative(snap, bench) + upside, len(snap["setups"]))
+        return sorted(names, key=score, reverse=True)
 
     if len(directions) == 1:
         slots = {directions[0]: max_candidates}
