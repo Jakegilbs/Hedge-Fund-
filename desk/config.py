@@ -50,6 +50,7 @@ class Settings:
     options_extra: tuple[str, ...] = ()
     options_min_price: float = 5.0
     options_min_dollar_volume: float = 20_000_000
+    options_max_checks: int = 60
     include_nasdaq_cheap: bool = False
     nasdaq_min_price: float = 5.0
     nasdaq_max_price: float = 30.0
@@ -97,6 +98,7 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         options_extra=tuple(t.upper() for t in raw["universe"].get("options_extra", [])),
         options_min_price=float(raw["universe"].get("options_min_price", 5.0)),
         options_min_dollar_volume=float(raw["universe"].get("options_min_dollar_volume", 20_000_000)),
+        options_max_checks=int(raw["universe"].get("options_max_checks", 60)),
         include_nasdaq_cheap=bool(raw["universe"].get("include_nasdaq_cheap", False)),
         nasdaq_min_price=float(raw["universe"].get("nasdaq_min_price", 5.0)),
         nasdaq_max_price=float(raw["universe"].get("nasdaq_max_price", 30.0)),

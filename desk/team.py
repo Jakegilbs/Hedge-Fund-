@@ -159,7 +159,8 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
                                affordable=options_affordable(settings, account.cash),
                                upside_weight=UPSIDE_WEIGHT if settings.instrument == "options" else 0.0,
                                tradeable=options_tradeable(settings, account.cash, tech_all["tickers"], now,
-                                                           fetch_option_chains))
+                                                           fetch_option_chains),
+                               max_checks=settings.options_max_checks)
         candidates = scan.candidates
 
     run = TeamRun(time_et=time_et, candidates=candidates, scan=scan)

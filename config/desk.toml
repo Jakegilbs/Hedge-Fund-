@@ -53,6 +53,7 @@ options_extra = [
 ]
 options_min_price = 5.0            # replaces min_price in options mode
 options_min_dollar_volume = 20_000_000   # replaces min_dollar_volume in options mode
+options_max_checks = 60            # stocks whose option chains are checked per run (~1-2 s each)
 # Options mode: also scan cheap, liquid Nasdaq stocks (screened weekly from Nasdaq's
 # full symbol list; the stock price band is what a small account's options can afford).
 include_nasdaq_cheap = true
