@@ -77,6 +77,17 @@ class TeamRun:
         return round(sum(a.cost_usd for a in self.agents), 4)
 
 
+def options_affordable(settings: Settings, cash: float):
+    """Options mode: a filter that keeps only stocks whose near-the-money option fits the cash."""
+    if settings.instrument != "options":
+        return None
+
+    def ok(snap: dict) -> bool:
+        est = options.estimated_atm_cost(snap.get("live_price") or snap["close"], snap.get("atr_pct"))
+        return est is not None and est <= cash
+    return ok
+
+
 def _check_reports(run: "TeamRun", candidates: list[str], min_rr: float) -> None:
     """Code checks on the analysts' reports before the PM sees them.
 
@@ -131,7 +142,8 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     else:
         directions = ("bullish", "bearish") if settings.instrument == "options" else ("bullish",)
         scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
-                               settings.min_price, settings.min_dollar_volume, directions=directions)
+                               settings.min_price, settings.min_dollar_volume, directions=directions,
+                               affordable=options_affordable(settings, account.cash))
         candidates = scan.candidates
 
     run = TeamRun(time_et=time_et, candidates=candidates, scan=scan)

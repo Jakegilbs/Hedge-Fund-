@@ -30,6 +30,7 @@ class ScanResult:
     leaders: list[str] = field(default_factory=list)
     filtered_extended: list[str] = field(default_factory=list)
     filtered_pinned: list[str] = field(default_factory=list)
+    filtered_unaffordable: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     setup_counts: dict[str, int] = field(default_factory=dict)
     why: dict[str, str] = field(default_factory=dict)
@@ -57,9 +58,11 @@ def _problem(s: dict, direction: str) -> str | None:
 
 def pick_candidates(tech_snapshots: dict[str, dict], held: list[str], max_candidates: int = 8,
                     min_price: float = 0.0, min_dollar_volume: float = 0.0,
-                    benchmark: str = "SPY", directions: tuple[str, ...] = ("bullish",)) -> ScanResult:
+                    benchmark: str = "SPY", directions: tuple[str, ...] = ("bullish",),
+                    affordable=None) -> ScanResult:
     """A stale ticker is never a new candidate; a stale held position is still
-    reviewed so the PM can see and flag the data problem."""
+    reviewed so the PM can see and flag the data problem. `affordable(snapshot)`,
+    when given (options mode), drops tickers whose options the account cannot buy."""
     result = ScanResult(candidates=[], scanned=len(tech_snapshots))
     bench = (tech_snapshots.get(benchmark) or {}).get("change_pct", {})
     pools: dict[str, dict[str, list[str]]] = {d: {"setup": [], "trend": []} for d in directions}
@@ -90,7 +93,9 @@ def pick_candidates(tech_snapshots: dict[str, dict], held: list[str], max_candid
                 result.filtered_illiquid.append(t)
             continue
         problem = _problem(s, direction)
-        if problem == "extended":
+        if affordable is not None and not affordable(s):
+            result.filtered_unaffordable.append(t)
+        elif problem == "extended":
             result.filtered_extended.append(t)
         elif problem == "pinned":
             result.filtered_pinned.append(t)

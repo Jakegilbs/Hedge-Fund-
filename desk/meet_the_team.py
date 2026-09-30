@@ -18,7 +18,7 @@ from . import market_data
 from .config import DATA_DIR, ROOT, load_env_file, load_settings
 from .llm import ClaudeRunner
 from .scanner import pick_candidates
-from .team import TeamRun, load_account, run_team
+from .team import TeamRun, load_account, options_affordable, run_team
 from .universe import load_universe
 
 RUNS_DIR = DATA_DIR / "runs"
@@ -62,6 +62,8 @@ def _print_scan(sc, universe_size: int | None = None, downloaded: int | None = N
     counts = ", ".join(f"{k} {v}" for k, v in sorted(sc.setup_counts.items())) or "none"
     print(f"Checked {sc.scanned} | stale {len(sc.stale)} | with a setup {len(sc.with_setups)} ({counts})"
           f" | too illiquid {len(sc.filtered_illiquid)}")
+    if sc.filtered_unaffordable:
+        print(f"Skipped, options too expensive for the account: {len(sc.filtered_unaffordable)} tickers")
     if sc.filtered_extended or sc.filtered_pinned:
         print(f"Skipped as overextended: {', '.join(sorted(sc.filtered_extended)) or 'none'}"
               f" | pinned (too quiet): {', '.join(sorted(sc.filtered_pinned)) or 'none'}")
@@ -155,7 +157,8 @@ def main() -> None:
         scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
                                settings.min_price, settings.min_dollar_volume,
                                directions=("bullish", "bearish") if settings.instrument == "options"
-                               else ("bullish",))
+                               else ("bullish",),
+                               affordable=options_affordable(settings, account.cash))
         print(json.dumps(market_data.regime_packet(
             bars, list(settings.regime_symbols), list(settings.sector_etfs), universe), indent=1, default=str))
         _print_scan(scan, len(universe), sum(1 for t in universe if t in bars))

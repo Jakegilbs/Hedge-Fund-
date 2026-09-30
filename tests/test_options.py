@@ -43,7 +43,7 @@ def test_too_expensive_explains_why():
 
 def test_skips_expiries_after_earnings():
     c, note = select_contract(chain(), "bullish", 20.0, cash=100, cfg=CFG, today=TODAY, earnings="2026-10-20")
-    assert c is None and "before earnings" in note
+    assert c is None and "expiry after earnings" in note
 
 
 def test_skips_wide_spreads_and_thin_open_interest():
@@ -149,3 +149,23 @@ def test_blank_yahoo_fields_are_ignored_not_crashing():
     df.loc[1, "bid"] = float("nan")
     c, note = select_contract({"2026-11-06": df}, "bullish", 20.0, cash=100, cfg=CFG, today=TODAY)
     assert c is None or c["contract_symbol"] not in (df.loc[0, "contractSymbol"], df.loc[1, "contractSymbol"])
+
+
+def test_estimated_atm_cost_tracks_real_prices():
+    from desk.options import estimated_atm_cost
+    # A $20 stock moving ~3% a day: roughly $100 for a 5-week near-the-money option.
+    assert 60 <= estimated_atm_cost(20.0, 3.0) <= 140
+    # A $190 stock moving ~3.6% a day: roughly $1,000+.
+    assert estimated_atm_cost(190.0, 3.6) > 800
+
+
+def test_scanner_skips_tickers_whose_options_are_unaffordable():
+    from desk.scanner import pick_candidates
+    from desk.options import estimated_atm_cost
+    base = {"setups": [{"setup": "pullback", "direction": "bullish"}], "stale": False,
+            "avg_dollar_volume_20d": 1e9, "change_pct": {"20d": 2, "60d": 5}, "rsi14": 55.0,
+            "trend_facts": {"trend": "up"}, "pct_from_52w_high": -2.0}
+    snaps = {"PRICEY": {**base, "close": 190.0, "atr_pct": 3.6}, "CHEAP": {**base, "close": 12.0, "atr_pct": 3.0}}
+    ok = lambda s: estimated_atm_cost(s["close"], s["atr_pct"]) <= 100
+    scan = pick_candidates(snaps, held=[], affordable=ok)
+    assert scan.candidates == ["CHEAP"] and scan.filtered_unaffordable == ["PRICEY"]
