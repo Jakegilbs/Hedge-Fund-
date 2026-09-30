@@ -31,7 +31,7 @@ How a run works:
    weekly from Nasdaq's full symbol list) and a list of popular cheap optionable
    names, and skips stocks whose options the account cannot afford.
 2. The scanner keeps tickers with a fresh setup that pass the liquidity filter,
-   ranks them by strength relative to SPY, and sends only the top 5 (plus any open
+   ranks them by strength relative to SPY, and sends only the top 8 (plus any open
    positions) to the analysts. None means a quiet day and **no AI cost**.
 3. The three analysts run in parallel, each receiving one data packet and
    replying in a strict format (`desk/schemas.py`).
