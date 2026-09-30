@@ -64,6 +64,34 @@ def _save_cached(sym: str, df: pd.DataFrame, cache_dir=None) -> None:
     df.to_csv(_cache_path(sym, cache_dir), date_format="%Y-%m-%d")
 
 
+def _period_years(period: str) -> float:
+    """"6y" -> 6, "18mo" -> 1.5; other periods (e.g. "max") -> 0 (never extends a cache)."""
+    p = period.strip().lower()
+    try:
+        if p.endswith("mo"):
+            return float(p[:-2]) / 12
+        if p.endswith("y"):
+            return float(p[:-1])
+    except ValueError:
+        pass
+    return 0.0
+
+
+def _history_record(cache_dir) -> dict:
+    import json
+    path = (cache_dir or BAR_CACHE) / "_history_years.json"
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def _save_history_record(cache_dir, record: dict) -> None:
+    import json
+    (cache_dir or BAR_CACHE).mkdir(parents=True, exist_ok=True)
+    ((cache_dir or BAR_CACHE) / "_history_years.json").write_text(json.dumps(record))
+
+
 def download_bars(symbols: list[str], period: str = "2y", batch: int = 40, pause: float = 2.0,
                   priority: list[str] | None = None, log=print,
                   cache_dir=None) -> dict[str, pd.DataFrame]:
@@ -74,12 +102,22 @@ def download_bars(symbols: list[str], period: str = "2y", batch: int = 40, pause
     with a cache only fetch the last month; symbols cached in the last 20
     minutes are not downloaded at all; failures fall back to the cached copy.
     `cache_dir` keeps a separate cache (the backtester stores longer histories).
+    A cached symbol with less history than `period` is downloaded again in full, once
+    (a record of how many years were fetched stops young stocks being re-fetched).
     """
     order = list(dict.fromkeys([*(priority or []), *symbols]))
     bars: dict[str, pd.DataFrame] = {}
     need_full, need_recent = [], []
+    want_years = _period_years(period)
+    record = _history_record(cache_dir)
     for sym in order:
         cached = _load_cached(sym, cache_dir)
+        if cached is not None and want_years:
+            span = (cached.index[-1] - cached.index[0]).days / 365.25
+            if max(span, record.get(sym, 0.0)) + 0.1 < want_years:
+                bars[sym] = cached              # fallback if the longer download fails
+                need_full.append(sym)
+                continue
         if cached is not None and time.time() - _cache_path(sym, cache_dir).stat().st_mtime < FRESH_SECONDS:
             bars[sym] = cached
         elif cached is not None:
@@ -99,7 +137,8 @@ def download_bars(symbols: list[str], period: str = "2y", batch: int = 40, pause
     jobs = [(need_recent, "1mo"), (need_full, period)]
     total = len(need_recent) + len(need_full)
     if total:
-        log(f"Downloading {total} symbols ({len(bars) - len(need_recent)} already fresh in cache)...")
+        log(f"Downloading {total} symbols ({len(order) - total} already fresh in cache"
+            + (f"; {len(need_full)} need a longer history" if need_full and want_years else "") + ")...")
     done = 0
     for syms, per in jobs:
         for i in range(0, len(syms), batch):
@@ -112,12 +151,16 @@ def download_bars(symbols: list[str], period: str = "2y", batch: int = 40, pause
                 if len(df) >= 30:
                     bars[sym] = df
                     _save_cached(sym, df, cache_dir)
+                    if per == period and want_years:
+                        record[sym] = want_years
             done += len(chunk)
             if len(got) < len(chunk) * 0.5:
                 log(f"  Yahoo returned {len(got)}/{len(chunk)}; slowing down...")
                 time.sleep(pause * 5)
             else:
                 time.sleep(pause)
+    if want_years and total:
+        _save_history_record(cache_dir, record)
     return bars
 
 

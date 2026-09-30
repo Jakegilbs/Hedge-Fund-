@@ -13,10 +13,13 @@ filter on, it holds cash whenever SPY closes below its 200-day average.
 Two benchmarks, both on the same dates:
 - SPY: what $100 in the index would have become.
 - Equal weight: every stock in the same universe, equally weighted, rebalanced
-  monthly. The free stock list is TODAY's S&P 500, which leaves out companies
-  that dropped out and includes ones that joined because they rose. That makes
-  every strategy on it look better than reality. The equal-weight benchmark
-  has the same flaw, so momentum only counts as an edge if it beats it.
+  monthly. Momentum only counts as an edge if it beats this.
+
+The universe on each date is the S&P 500 as it was THEN (desk/membership.py),
+so stocks are not ranked before they joined the index. Companies that were
+later acquired or went bankrupt usually have no price data left and are
+missing; the coverage line shows how many. `--membership today` repeats the
+old, biased method (today's list for every date) for comparison.
 """
 from __future__ import annotations
 
@@ -62,6 +65,13 @@ class Panel:
     open: pd.DataFrame
     dollar_volume: pd.DataFrame
     spy: pd.Series
+    member: pd.DataFrame | None = None     # True where a stock was in the index that day
+
+    def eligible(self, s: int) -> pd.Series:
+        """Stocks that may be ranked on day s: index members at the time (if known)."""
+        if self.member is None:
+            return pd.Series(True, index=self.close.columns)
+        return self.member.iloc[s].reindex(self.close.columns, fill_value=False).astype(bool)
 
     @classmethod
     def from_bars(cls, bars: dict[str, pd.DataFrame], tickers: list[str]) -> "Panel":
@@ -98,7 +108,8 @@ def target_weights(panel: Panel, s: int, cfg: RotationConfig) -> pd.Series:
     if begin < 0:
         return pd.Series(dtype=float)
     gain = c.iloc[end] / c.iloc[begin] - 1
-    ok = (c.iloc[s] >= cfg.min_price) & (panel.dollar_volume.iloc[s] >= cfg.min_dollar_volume) & gain.notna()
+    ok = ((c.iloc[s] >= cfg.min_price) & (panel.dollar_volume.iloc[s] >= cfg.min_dollar_volume)
+          & gain.notna() & panel.eligible(s))
     if cfg.positive_only:
         ok &= gain > 0
     picks = gain[ok].sort_values(ascending=False).head(cfg.top)
@@ -117,7 +128,8 @@ def target_weights(panel: Panel, s: int, cfg: RotationConfig) -> pd.Series:
 def equal_weight_all(panel: Panel, s: int, cfg: RotationConfig) -> pd.Series:
     """Benchmark: every liquid stock in the universe, equal weight."""
     c = panel.close
-    ok = (c.iloc[s] >= cfg.min_price) & (panel.dollar_volume.iloc[s] >= cfg.min_dollar_volume) & c.iloc[s].notna()
+    ok = ((c.iloc[s] >= cfg.min_price) & (panel.dollar_volume.iloc[s] >= cfg.min_dollar_volume)
+          & c.iloc[s].notna() & panel.eligible(s))
     names = ok[ok].index
     return pd.Series(1.0 / len(names), index=names) if len(names) else pd.Series(dtype=float)
 
@@ -130,6 +142,7 @@ class RotationResult:
     turnover: float = 0.0             # average fraction of the account traded per rebalance
     months_in_cash: int = 0
     last_weights: pd.Series | None = None
+    log: list = None                  # (rebalance day index, weights) for every rebalance
 
 
 def simulate(panel: Panel, start: int, cfg: RotationConfig, weigher=target_weights,
@@ -143,7 +156,7 @@ def simulate(panel: Panel, start: int, cfg: RotationConfig, weigher=target_weigh
     cash = cfg.start_equity
     eq = np.full(len(C), np.nan)
     eq[start - 1] = cash
-    res = RotationResult(label or cfg.label, pd.Series(dtype=float))
+    res = RotationResult(label or cfg.label, pd.Series(dtype=float), log=[])
     turnovers, w = [], pd.Series(dtype=float)
 
     def ratio(a, b):
@@ -166,6 +179,7 @@ def simulate(panel: Panel, start: int, cfg: RotationConfig, weigher=target_weigh
             turnovers.append(traded / total if total > 0 else 0.0)
             res.rebalances += 1
             res.months_in_cash += w.empty
+            res.log.append((d, w))
             hold *= ratio(C[d], O[d])
         else:
             hold *= ratio(C[d], C[d - 1])
@@ -265,13 +279,43 @@ def report(benches: list[RotationResult], results: list[tuple[RotationConfig, Ro
               "trust a pattern (e.g. every top-5/top-10 version of one lookback winning), not the single best row.",
               f"Rebalances: {n_reb}. If the AI team reviewed each one (~${ai_cost_per_rebalance:.2f}), that is "
               f"~${n_reb * ai_cost_per_rebalance:.0f} over the period, about the same for every version.",
-              "Stock list = today's S&P 500 (companies that dropped out are missing): compare with equal weight, "
-              "not with SPY, to judge the momentum effect."]
+              "Judge momentum against equal weight (same stocks, same dates), not only against SPY."]
     return "\n".join(lines)
 
 
+def holdings_table(panel: Panel, r: RotationResult) -> pd.DataFrame:
+    """Every position of every rebalance: weight, the stock's return until the next
+    rebalance (open to open), and its contribution (weight x return)."""
+    O, C = panel.open, panel.close
+    rows = []
+    for k, (d, w) in enumerate(r.log or []):
+        end = r.log[k + 1][0] if k + 1 < len(r.log) else None
+        for t, x in w.items():
+            buy = O[t].iloc[d]
+            sell = O[t].iloc[end] if end is not None else np.nan
+            if not np.isfinite(sell):              # last price available before the next rebalance
+                held = C[t].iloc[d:end].dropna()
+                sell = held.iloc[-1] if len(held) else buy
+            ret = sell / buy - 1 if np.isfinite(buy) and buy > 0 else 0.0
+            rows.append({"date": O.index[d].date(), "ticker": t, "weight": round(float(x), 4),
+                         "return_pct": round(float(ret) * 100, 2),
+                         "contribution_pct": round(float(x * ret) * 100, 3)})
+    return pd.DataFrame(rows)
+
+
+def suspicious_moves(panel: Panel, tickers, limit: float = 0.5) -> list[str]:
+    """Held stocks with a one-day move above 50%: often a bad split or price in the data."""
+    out = []
+    for t in sorted(set(tickers)):
+        ch = panel.close[t].pct_change(fill_method=None).abs()
+        big = ch[ch > limit]
+        for day, v in big.items():
+            out.append(f"{t} {day.date()} {v * 100:+.0f}% in one day")
+    return out
+
+
 def detail(cfg: RotationConfig, r: RotationResult, spy: RotationResult, ew: RotationResult,
-           panel: Panel) -> str:
+           panel: Panel, biased: tuple[RotationResult, RotationResult] | None = None) -> str:
     """One version: results by year, turnover, and what it would hold now."""
     lines = ["", f"--- {cfg.label}: year by year (return %)",
              f"{'year':<8}{'momentum':>10}{'SPY':>8}{'equal wt':>10}"]
@@ -285,6 +329,31 @@ def detail(cfg: RotationConfig, r: RotationResult, spy: RotationResult, ew: Rota
         lines.append(f"{y:<8}{yr(r.equity):>9.1f}%{yr(spy.equity):>7.1f}%{yr(ew.equity):>9.1f}%")
     lines.append(f"Average share of the account traded per rebalance: {r.turnover * 100:.0f}%; "
                  f"rebalances in cash (market filter): {r.months_in_cash} of {r.rebalances}")
+    if biased:
+        m, e = (metrics(x.equity).get("final") for x in biased)
+        lines.append(f"Same version on TODAY's S&P 500 list for every date (the biased way): $100 -> ${m:,.2f} "
+                     f"(equal weight ${e:,.2f}). The gap to the numbers above is the survivorship bias.")
+    table = holdings_table(panel, r)
+    if not table.empty:
+        by = table.groupby("ticker").agg(months=("date", "count"), contribution=("contribution_pct", "sum"))
+        total = by.contribution.sum()
+        best = by.sort_values("contribution", ascending=False).head(10)
+        lines += ["", f"--- Where the gains came from ({len(by)} different stocks held; sum of monthly "
+                      f"contributions {total:+.0f} points)",
+                  f"{'stock':<8}{'months held':>12}{'contribution':>14}"]
+        for t, row_ in best.iterrows():
+            lines.append(f"{t:<8}{int(row_.months):>12}{row_.contribution:>+13.1f}%")
+        top3 = best.contribution.head(3).sum()
+        lines.append(f"Top 3 stocks: {top3:+.0f} of {total:+.0f} points"
+                     + (" -> the result depends on a few stocks" if total > 0 and top3 > 0.5 * total else ""))
+        worst = by.sort_values("contribution").head(3)
+        lines.append("Worst: " + ", ".join(f"{t} {v:+.1f}%" for t, v in worst.contribution.items()))
+        flags = suspicious_moves(panel, by.index)
+        lines.append("Data check (one-day moves over 50% in held stocks): "
+                     + ("; ".join(flags[:10]) + (" ..." if len(flags) > 10 else "") if flags else "none found"))
+        lines += ["", "--- Last 6 rebalances"]
+        for day, g in list(table.groupby("date"))[-6:]:
+            lines.append(f"{day}: " + ", ".join(f"{t} {x:+.0f}%" for t, x in zip(g.ticker, g.return_pct)))
     now = target_weights(panel, len(panel.close) - 1, cfg)
     if now.empty:
         lines.append("Holdings today: CASH (market filter or no stock with a positive gain)")
@@ -300,30 +369,37 @@ def detail(cfg: RotationConfig, r: RotationResult, spy: RotationResult, ew: Rota
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--years", type=float, default=4.0, help="years to test (default 4)")
+    ap.add_argument("--years", type=float, default=10.0, help="years to test (default 10)")
     ap.add_argument("--lookback", type=int, help="test one version: lookback in trading days (e.g. 60)")
     ap.add_argument("--skip", type=int, default=0, help="skip the most recent N days (e.g. 21)")
     ap.add_argument("--top", type=int, default=10, help="stocks held (default 10)")
     ap.add_argument("--weighting", choices=("equal", "invvol"), default="equal")
     ap.add_argument("--no-filter", action="store_true", help="stay invested when SPY is below its 200-day average")
     ap.add_argument("--rebalance", type=int, default=1, help="rebalance every N months (default 1)")
-    ap.add_argument("--universe", choices=("sp500", "all"), default="sp500",
-                    help="sp500 (default) or the desk's full universe including cheap Nasdaq stocks")
+    ap.add_argument("--membership", choices=("history", "today"), default="history",
+                    help="history (default): only stocks in the S&P 500 at the time; "
+                         "today: today's list for every date (biased, for comparison)")
     args = ap.parse_args()
 
     from . import market_data
     from .backtest import BACKTEST_CACHE
     from .config import load_settings
-    from .universe import load_universe, sp500_symbols
+    from .membership import load_membership
+    from .universe import sp500_symbols
 
     settings = load_settings()
-    if args.universe == "sp500":
-        tickers = sorted((set(sp500_symbols()) | set(settings.allowlist)) - settings.etfs)
-    else:
-        tickers = sorted(set(load_universe(settings)) - settings.etfs)
-    period = f"{min(10, math.ceil(args.years) + 2)}y"
-    print(f"Momentum rotation on {len(tickers)} stocks over {args.years:g} years ({period} of prices, cached "
-          f"in data/cache/bars_long)...")
+    today_list = sorted(set(sp500_symbols()) - settings.etfs)
+    hist = load_membership() if args.membership == "history" else None
+    if args.membership == "history" and hist is None:
+        raise SystemExit("Could not load the historical S&P 500 list. Check the internet connection, or run "
+                         "with --membership today (biased).")
+    end = pd.Timestamp.today().normalize()
+    first_needed = end - pd.Timedelta(days=int(args.years * 365.25) + 420)   # + warm-up for the lookbacks
+    tickers = sorted((hist.ever_between(first_needed, end) if hist else set()) | set(today_list))
+    tickers = [t for t in tickers if t not in settings.etfs]
+    period = f"{math.ceil(args.years) + 2}y"
+    print(f"Momentum rotation over {args.years:g} years: {len(tickers)} stocks were in the S&P 500 at some point "
+          f"(downloading {period} of prices; the first run takes several minutes, then it is cached)...")
     bars = market_data.download_bars(sorted(set(tickers) | {"SPY"}), period=period, priority=["SPY"],
                                      cache_dir=BACKTEST_CACHE)
     if "SPY" not in bars:
@@ -331,8 +407,22 @@ def main() -> None:
     panel = Panel.from_bars(bars, tickers)
     first = panel.close.index[-1] - pd.Timedelta(days=int(args.years * 365.25))
     start = max(int(panel.close.index.searchsorted(first)), 273 + 1)   # room for a 252+21 day lookback
-    print(f"Price data for {panel.close.shape[1]} of {len(tickers)} stocks. Testing from "
-          f"{panel.close.index[start].date()}...")
+
+    today_mask = pd.DataFrame(True, index=panel.close.index,
+                              columns=[t for t in today_list if t in panel.close.columns])
+    panel_today = replace(panel, member=today_mask)
+    if hist:
+        panel = replace(panel, member=hist.mask(panel.close.index, panel.close.columns))
+        print("Coverage (index members with price data):")
+        for y in sorted(set(panel.close.index[start:].year)):
+            day = panel.close.index[panel.close.index.year == y][0]
+            members = hist.on(day)
+            have = sum(1 for t in members if t in panel.close.columns and pd.notna(panel.close[t].loc[day]))
+            print(f"  {day.date()}: {have} of {len(members)} members ({have / max(1, len(members)) * 100:.0f}%)"
+                  + ("" if have / max(1, len(members)) > 0.9 else "  <- missing ones were mostly acquired or delisted"))
+    else:
+        panel = panel_today
+    print(f"Testing from {panel.close.index[start].date()}...")
 
     base = RotationConfig(rebalance_months=args.rebalance)
     if args.lookback:
@@ -342,18 +432,21 @@ def main() -> None:
         configs = default_grid(base)
     benches, results = run_grid(panel, start, configs)
     text = report(benches, results)
-    if args.lookback:
-        cfg, r = results[0]
-        text += detail(cfg, r, benches[0], benches[1], panel)
-    else:
-        mine = replace(base, lookback=60, top=10)        # the version that started this
-        r = next(x for c, x in results if c == mine)
-        text += detail(mine, r, benches[0], benches[1], panel)
+    cfg, r = (results[0] if args.lookback else
+              next((c, x) for c, x in results if c == replace(base, lookback=60, top=10)))
+    biased = None
+    if hist:
+        biased = (simulate(panel_today, start, cfg),
+                  simulate(panel_today, start, replace(cfg, market_filter=False), equal_weight_all))
+    text += detail(cfg, r, benches[0], benches[1], panel, biased)
     print(text)
     BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
-    path = BACKTEST_DIR / f"rotation_{datetime.now():%Y%m%d_%H%M%S}.txt"
+    stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+    path = BACKTEST_DIR / f"rotation_{stamp}.txt"
     path.write_text(text)
-    print(f"\nSaved: {path.relative_to(DATA_DIR.parent)}")
+    holdings_table(panel, r).to_csv(BACKTEST_DIR / f"rotation_holdings_{stamp}.csv", index=False)
+    print(f"\nSaved: {path.relative_to(DATA_DIR.parent)} and rotation_holdings_{stamp}.csv "
+          f"(every monthly position of {cfg.label.split()[0]} top {cfg.top})")
 
 
 if __name__ == "__main__":

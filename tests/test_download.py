@@ -38,7 +38,7 @@ def test_stale_cache_only_fetches_recent_month(tmp_path, monkeypatch):
     os.utime(tmp_path / "AAPL.csv", (0, 0))                 # make the cache old
     calls = []
     monkeypatch.setattr(market_data.yf, "download", fake_yahoo({"AAPL"}, calls))
-    bars = market_data.download_bars(["AAPL"], log=lambda *a: None)
+    bars = market_data.download_bars(["AAPL"], period="1y", log=lambda *a: None)   # cache covers 1y
     assert calls == [(("AAPL",), "1mo")]
     assert len(bars["AAPL"]) > 300
 
@@ -51,3 +51,23 @@ def test_failed_update_falls_back_to_cache(tmp_path, monkeypatch):
     os.utime(tmp_path / "AAPL.csv", (0, 0))
     monkeypatch.setattr(market_data.yf, "download", fake_yahoo(set(), []))
     assert "AAPL" in market_data.download_bars(["AAPL"], log=lambda *a: None)
+
+
+def test_longer_period_refetches_short_history_once(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(market_data.time, "sleep", lambda s: None)
+    market_data._save_cached("AAPL", make_bars(n=300), tmp_path)       # ~1.2 years cached
+    os.utime(tmp_path / "AAPL.csv", (0, 0))
+    calls = []
+
+    def download(syms, period, **kw):
+        calls.append(period)
+        n = 22 if period == "1mo" else 60        # a young stock: Yahoo has little history
+        return pd.concat({s: make_bars(n=n, seed=1) for s in syms}, axis=1)
+    monkeypatch.setattr(market_data.yf, "download", download)
+    market_data.download_bars(["AAPL"], period="10y", log=lambda *a: None, cache_dir=tmp_path)
+    assert calls == ["10y"]                                              # history too short: full download
+    os.utime(tmp_path / "AAPL.csv", (0, 0))
+    calls.clear()
+    market_data.download_bars(["AAPL"], period="10y", log=lambda *a: None, cache_dir=tmp_path)
+    assert calls == ["1mo"]                                              # recorded: only the recent update
