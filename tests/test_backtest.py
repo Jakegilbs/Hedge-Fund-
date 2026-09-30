@@ -163,3 +163,14 @@ def test_option_stop_can_follow_the_stock_stop():
     crash = [(20, 20.2, 19.9, 20), (19.9, 20.0, 18.0, 18.2)] + [(18.2, 18.3, 18.1, 18.2)] * 8
     out = bt.simulate_option(*arrays(crash), dates, bt.Fill(0, 20.0), "bullish", 0.5, cfg, stock_stop=18.5)
     assert out["opt_exit_reason"] == "stop" and out["opt_return_pct"] < -15
+
+
+def test_select_trades_filters_setups_market_and_half():
+    rows = [_signal("2026-01-05", "AAA", 1.0), _signal("2026-07-05", "BBB", 1.0, direction="bearish"),
+            _signal("2026-12-05", "CCC", 1.0)]
+    rows[2]["setup"] = "pullback"
+    t = pd.DataFrame(rows)
+    assert list(bt.select_trades(t, ["pullback"]).ticker) == ["CCC"]
+    assert list(bt.select_trades(t, with_market=True).ticker) == ["AAA", "CCC"]   # bearish while market up: out
+    assert list(bt.select_trades(t, half="first").ticker) == ["AAA"]
+    assert list(bt.select_trades(t, half="second").ticker) == ["BBB", "CCC"]

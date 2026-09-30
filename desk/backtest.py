@@ -542,6 +542,22 @@ def run_backtest(bars: dict[str, pd.DataFrame], tickers: list[str], cfg: BTConfi
     return pd.DataFrame(all_trades), filtered
 
 
+def select_trades(trades: pd.DataFrame, setups=SETUP_NAMES, with_market: bool = False,
+                  half: str | None = None) -> pd.DataFrame:
+    """Keep only some setups, only trades with the market trend, and/or one half of the period."""
+    if trades.empty:
+        return trades
+    t = trades[trades.setup.isin(setups)]
+    if with_market:
+        t = t[t.market_up.notna() & ((t.direction == "bullish") == t.market_up.astype(bool))]
+    if half:
+        dates = pd.to_datetime(trades.signal_date)
+        mid = dates.min() + (dates.max() - dates.min()) / 2
+        d = pd.to_datetime(t.signal_date)
+        t = t[d < mid] if half == "first" else t[d >= mid]
+    return t
+
+
 def _fmt(row: dict) -> str:
     if not row.get("trades"):
         return "      0 trades"
@@ -626,7 +642,17 @@ def main() -> None:
     ap.add_argument("--equity", type=float, help="starting account (default 100)")
     ap.add_argument("--option-stop", help="option stop: a fraction like 0.15 (live default) or 0.5, "
                                           "or 'stock' to exit when the stock hits the setup's stop")
+    ap.add_argument("--setups", help=f"only these setups, comma-separated ({', '.join(SETUP_NAMES)})")
+    ap.add_argument("--with-market", action="store_true",
+                    help="only trades with the market: bullish while SPY is above its 50-day average, "
+                         "bearish while below")
+    ap.add_argument("--half", choices=("first", "second"),
+                    help="only the first or second half of the period: tune on one, confirm on the other")
     args = ap.parse_args()
+    setups = [x.strip() for x in args.setups.split(",")] if args.setups else list(SETUP_NAMES)
+    unknown = set(setups) - set(SETUP_NAMES)
+    if unknown:
+        raise SystemExit(f"Unknown setup(s): {', '.join(sorted(unknown))}. Choose from {', '.join(SETUP_NAMES)}.")
 
     from . import market_data
     from .config import load_settings
@@ -660,6 +686,12 @@ def main() -> None:
     print(f"Price data for {sum(1 for t in tickers if t in bars)} of {len(tickers)} tickers. Simulating...")
 
     trades, filtered = run_backtest(bars, tickers, cfg, years=args.years)
+    trades = select_trades(trades, setups, args.with_market, args.half)
+    notes = [f"setups: {', '.join(setups)}"] if args.setups else []
+    notes += ["only trades with the market"] if args.with_market else []
+    notes += [f"{args.half} half of the period only"] if args.half else []
+    if notes:
+        print("Filters: " + "; ".join(notes))
     portfolios = []
     if not trades.empty:
         for mode, rf, label in (("hybrid", False, "hybrid (the live desk)"),

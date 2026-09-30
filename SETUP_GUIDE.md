@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **101 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **102 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -236,7 +236,12 @@ python -m desk.backtest --option-stop stock    # exit options when the stock hit
 python -m desk.backtest --option-stop 0.5      # a -50% option stop instead of -15%
 python -m desk.backtest --target-r 3 --hold 10 # bigger target, shorter hold
 python -m desk.backtest --spread 0.05          # tighter option spreads
+python -m desk.backtest --setups breakout,pullback --with-market   # only some setups, only with the trend
+python -m desk.backtest --half first           # tune on the first half of the years...
+python -m desk.backtest --half second          # ...then check the same settings on the second half
 ```
+
+A rule that only works in the half you tuned it on is luck, not an edge.
 
 Every trade is saved to `data/backtests/` as a CSV (opens in Numbers or Excel).
 The analysts are not simulated, option prices are estimates, and today's
