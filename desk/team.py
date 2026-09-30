@@ -76,6 +76,35 @@ class TeamRun:
         return round(sum(a.cost_usd for a in self.agents), 4)
 
 
+def _check_reports(run: "TeamRun", candidates: list[str], min_rr: float) -> None:
+    """Code checks on the analysts' reports before the PM sees them.
+
+    - Views for tickers that were not sent are dropped (analysts can invent tickers).
+    - Candidates an analyst skipped are flagged.
+    - Reward-to-risk is recomputed from the Technical Analyst's own levels; a
+      "candidate" below the minimum becomes "watch".
+    """
+    sent = set(candidates)
+    for role in ("technical_analyst", "catalyst_analyst"):
+        report = run.analysts[role].report
+        extra = sorted({v.ticker.upper() for v in report.views} - sent)
+        report.views = [v for v in report.views if v.ticker.upper() in sent]
+        missing = sorted(sent - {v.ticker.upper() for v in report.views})
+        if extra:
+            report.warnings.append(f"code: removed views for tickers that were not sent: {', '.join(extra)}")
+        if missing:
+            report.warnings.append(f"code: no view returned for: {', '.join(missing)}")
+    for v in run.analysts["technical_analyst"].report.views:
+        if v.entry and v.stop and v.target and v.entry > v.stop:
+            v.reward_risk_checked = round((v.target - v.entry) / (v.entry - v.stop), 2)
+        else:
+            v.reward_risk_checked = None
+        if v.recommendation == "candidate" and (v.reward_risk_checked or 0) < min_rr:
+            v.recommendation = "watch"
+            v.risks += (f" [code: reward-to-risk {v.reward_risk_checked} is below {min_rr:g}, "
+                        "downgraded from candidate to watch]")
+
+
 def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
              bars: dict[str, pd.DataFrame],
              fetch_catalysts: Callable[[list[str]], dict] = market_data.catalyst_packet,
@@ -137,6 +166,7 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         run.stopped_reason = "analyst report missing, PM not called: " + "; ".join(failed)
         return run
 
+    _check_reports(run, candidates, settings.risk.min_reward_risk)
     tradeable = [v.ticker for v in run.analysts["technical_analyst"].report.views
                  if v.recommendation == "candidate" and v.data_ok]
     if not tradeable and not account.held:

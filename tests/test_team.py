@@ -146,3 +146,18 @@ def test_pm_still_runs_for_open_positions(bars, monkeypatch):
     held = AccountState(100, 0, positions=[{"ticker": "AAPL", "shares": 0.5}])
     run = run_team(load_settings(), runner, held, bars, fetch_catalysts=no_news)
     assert run.pm is not None
+
+
+def test_code_checks_reward_risk_and_drops_invented_tickers(bars, monkeypatch):
+    bad = REPORTS[TechnicalReport].model_copy(deep=True)
+    bad.views[0].target = 111.0                         # 110 entry, 105 stop -> 0.2 R:R
+    invented = bad.views[0].model_copy(update={"ticker": "MRC"})
+    bad.views.append(invented)
+    monkeypatch.setitem(REPORTS, TechnicalReport, bad)
+    runner, msgs = fake_runner()
+    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    tech = run.analysts["technical_analyst"].report
+    assert [v.ticker for v in tech.views] == ["NVDA"]
+    assert tech.views[0].recommendation == "watch" and tech.views[0].reward_risk_checked == 0.2
+    assert any("MRC" in w for w in tech.warnings)
+    assert run.pm is None                               # nothing tradeable -> PM skipped

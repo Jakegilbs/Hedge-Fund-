@@ -27,6 +27,8 @@ class TechnicalView(BaseModel):
     evidence: str = Field(description="1-3 sentences citing the numbers provided")
     risks: str = Field(description="What would invalidate the setup")
     recommendation: Literal["candidate", "watch", "avoid"]
+    reward_risk_checked: Optional[float] = Field(
+        default=None, description="Leave null. Filled in by code from entry, stop and target.")
 
 
 class TechnicalReport(BaseModel):
