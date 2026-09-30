@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import logging
+
 import pandas as pd
 import yfinance as yf
 
@@ -17,6 +19,8 @@ from .indicators import snapshot
 # Keep yfinance's cache inside the project folder instead of the system cache.
 (DATA_DIR / "cache").mkdir(parents=True, exist_ok=True)
 yf.set_tz_cache_location(str(DATA_DIR / "cache"))
+# yfinance prints lookup misses (e.g. "no fundamentals for SPY") that the desk already handles.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
@@ -76,16 +80,20 @@ def _next_earnings(ticker: yf.Ticker) -> str | None:
     return str(upcoming[0]) if upcoming else None
 
 
-def catalyst_packet(tickers: list[str]) -> dict:
-    """Headlines and next earnings date per ticker. Failures are recorded, not raised."""
+def catalyst_packet(tickers: list[str], etfs: frozenset[str] = frozenset()) -> dict:
+    """Headlines and next earnings date per ticker. Failures are recorded, not raised.
+
+    ETFs have no earnings, so no earnings lookup is attempted for them.
+    """
     out: dict[str, dict] = {}
     for sym in tickers:
         t = yf.Ticker(sym)
-        entry: dict = {"next_earnings": None, "headlines": [], "errors": []}
-        try:
-            entry["next_earnings"] = _next_earnings(t)
-        except Exception as e:  # data gaps must not stop the run
-            entry["errors"].append(f"earnings: {e}")
+        entry: dict = {"is_etf": sym in etfs, "next_earnings": None, "headlines": [], "errors": []}
+        if sym not in etfs:
+            try:
+                entry["next_earnings"] = _next_earnings(t)
+            except Exception as e:  # data gaps must not stop the run
+                entry["errors"].append(f"earnings: {e}")
         try:
             entry["headlines"] = _news_items(t)
         except Exception as e:

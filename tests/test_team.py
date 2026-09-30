@@ -49,7 +49,7 @@ def fake_runner(**kw):
     return ClaudeRunner(client=SimpleNamespace(beta=SimpleNamespace(messages=messages))), messages
 
 
-def no_news(tickers):
+def no_news(tickers, etfs=frozenset()):
     return {"today": "2026-09-29", "tickers": {t: {"next_earnings": None, "headlines": [], "errors": []}
                                                 for t in tickers}}
 

@@ -35,6 +35,12 @@ class Settings:
     effort: dict[str, str]
     prompt_versions: dict[str, str]
 
+    @property
+    def etfs(self) -> set[str]:
+        """Funds on the allowlist or used for context: they never have earnings."""
+        known = {"SPY", "QQQ", "IWM", "DIA", "TLT"}
+        return known | set(self.sector_etfs) | {s for s in self.regime_symbols if not s.startswith("^")}
+
 
 def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
     raw = tomllib.loads(Path(path).read_text())

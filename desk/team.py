@@ -102,7 +102,7 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     tech = {**tech_all, "tickers": {t: tech_all["tickers"][t] for t in candidates if t in tech_all["tickers"]},
             "missing_data": [t for t in candidates if t not in tech_all["tickers"]]}
     regime = market_data.regime_packet(bars, list(settings.regime_symbols), list(settings.sector_etfs), allow)
-    news = fetch_catalysts(candidates)
+    news = fetch_catalysts(candidates, frozenset(settings.etfs))
     run.data = {"technical": tech, "regime": regime, "news": news}
 
     jobs = {
