@@ -44,12 +44,12 @@ BAR_CACHE = DATA_DIR / "cache" / "bars"
 FRESH_SECONDS = 20 * 60        # a re-run within 20 minutes downloads nothing
 
 
-def _cache_path(sym: str):
-    return BAR_CACHE / f"{sym.replace('^', '_')}.csv"
+def _cache_path(sym: str, cache_dir=None):
+    return (cache_dir or BAR_CACHE) / f"{sym.replace('^', '_')}.csv"
 
 
-def _load_cached(sym: str) -> pd.DataFrame | None:
-    p = _cache_path(sym)
+def _load_cached(sym: str, cache_dir=None) -> pd.DataFrame | None:
+    p = _cache_path(sym, cache_dir)
     if not p.is_file():
         return None
     try:
@@ -59,26 +59,28 @@ def _load_cached(sym: str) -> pd.DataFrame | None:
         return None
 
 
-def _save_cached(sym: str, df: pd.DataFrame) -> None:
-    BAR_CACHE.mkdir(parents=True, exist_ok=True)
-    df.to_csv(_cache_path(sym), date_format="%Y-%m-%d")
+def _save_cached(sym: str, df: pd.DataFrame, cache_dir=None) -> None:
+    (cache_dir or BAR_CACHE).mkdir(parents=True, exist_ok=True)
+    df.to_csv(_cache_path(sym, cache_dir), date_format="%Y-%m-%d")
 
 
 def download_bars(symbols: list[str], period: str = "2y", batch: int = 40, pause: float = 2.0,
-                  priority: list[str] | None = None, log=print) -> dict[str, pd.DataFrame]:
+                  priority: list[str] | None = None, log=print,
+                  cache_dir=None) -> dict[str, pd.DataFrame]:
     """Daily OHLCV bars per symbol, oldest first, cached in data/cache/bars/.
 
     Yahoo throttles large bursts, so this downloads gently: priority symbols
     first (market context), then small sequential batches with pauses; symbols
     with a cache only fetch the last month; symbols cached in the last 20
     minutes are not downloaded at all; failures fall back to the cached copy.
+    `cache_dir` keeps a separate cache (the backtester stores longer histories).
     """
     order = list(dict.fromkeys([*(priority or []), *symbols]))
     bars: dict[str, pd.DataFrame] = {}
     need_full, need_recent = [], []
     for sym in order:
-        cached = _load_cached(sym)
-        if cached is not None and time.time() - _cache_path(sym).stat().st_mtime < FRESH_SECONDS:
+        cached = _load_cached(sym, cache_dir)
+        if cached is not None and time.time() - _cache_path(sym, cache_dir).stat().st_mtime < FRESH_SECONDS:
             bars[sym] = cached
         elif cached is not None:
             bars[sym] = cached              # fallback if the update fails
@@ -109,7 +111,7 @@ def download_bars(symbols: list[str], period: str = "2y", batch: int = 40, pause
                     df = df[~df.index.duplicated(keep="last")].sort_index()
                 if len(df) >= 30:
                     bars[sym] = df
-                    _save_cached(sym, df)
+                    _save_cached(sym, df, cache_dir)
             done += len(chunk)
             if len(got) < len(chunk) * 0.5:
                 log(f"  Yahoo returned {len(got)}/{len(chunk)}; slowing down...")

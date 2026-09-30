@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **85 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **101 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -206,6 +206,41 @@ Skipping a trade is always allowed. Every trade uses all available cash, and
 its cost is the most it can lose: the 15% stop limits a normal loss to about
 15%, but an option can gap through the stop, and if the stop is not honoured
 an option can expire worthless.
+
+## Step 9: Test the strategy on history (free, no AI)
+
+```bash
+python -m desk.backtest
+```
+
+It replays about 4 years of history. Every day, it applies the scanner's setup
+rules and trades each signal two ways: as shares, and as an estimated option
+using the live exit plan. Then it runs a $100 account through it the way the
+desk trades (one all-in position, best-ranked signal). The first run downloads
+about 6 years of prices and takes several minutes. Later runs use the cache in
+`data/cache/bars_long/`.
+
+How to read it:
+
+- **EXPECTANCY** is the average gain per trade after costs. Positive with **30+
+  trades** means a setup has an edge; negative means it loses money over time.
+- **With vs against the market** shows whether trading only with the market
+  trend helps.
+- **The $100 account** shows what the balance would have become, the worst
+  drop along the way, and the AI cost for the same period.
+
+Try other rules without changing the live desk:
+
+```bash
+python -m desk.backtest --option-stop stock    # exit options when the stock hits its stop
+python -m desk.backtest --option-stop 0.5      # a -50% option stop instead of -15%
+python -m desk.backtest --target-r 3 --hold 10 # bigger target, shorter hold
+python -m desk.backtest --spread 0.05          # tighter option spreads
+```
+
+Every trade is saved to `data/backtests/` as a CSV (opens in Numbers or Excel).
+The analysts are not simulated, option prices are estimates, and today's
+stock list leaves out companies that went bust, so treat results as optimistic.
 
 ---
 

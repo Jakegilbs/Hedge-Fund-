@@ -56,6 +56,7 @@ python -m pytest -q                                  # offline tests, no cost
 python -m desk.meet_the_team --data-only             # today's data, no AI cost
 echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env           # key stays in this folder
 python -m desk.meet_the_team --tickers NVDA,JPM      # meet the team (< $0.30)
+python -m desk.backtest                              # test the setups on ~4 years of history, no AI cost
 ```
 
 Each run prints every report, the PM's decision and the cost, and saves a full
@@ -83,6 +84,7 @@ desk/team.py            runs the team, fail-safe
 desk/options.py         picks the option contract (expiry, strike, liquidity, cost)
 desk/gatekeeper.py      recomputes sizes, enforces every limit (stock and options)
 desk/meet_the_team.py   command-line entry point
+desk/backtest.py        replays history: setups traded as shares and estimated options, plus a $100 account
 tests/                  offline tests with a fake Claude client
 ```
 
