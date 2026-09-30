@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **54 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **66 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -159,36 +159,46 @@ call and costs nothing.
 
 ## Step 8: Trading live, with you approving (Level 1)
 
+The desk trades **only long calls and long puts** (set in `config/desk.toml`,
+`[strategy] instrument = "options"`). Your Robinhood Agentic account needs
+**options trading enabled** (Robinhood asks a few questions to approve it).
+
 Until the Robinhood connection is built, you are the executor. Each trading
-morning after 10:00 ET:
+day:
 
 1. Run the team: `python -m desk.meet_the_team`
 2. Read the **APPROVED ORDERS**. Only orders listed there may be placed; never
-   place a REJECTED one or change the numbers upward.
-3. If you agree with a BUY, in the Robinhood app open your **Agentic account**,
-   choose the stock, **Buy → Limit order**, and enter the exact share amount and
-   limit price. Choose good for day.
-4. When it fills, place the **stop**: **Sell → Stop loss order** at the stop price
-   for the same shares, good till canceled. If the app will not accept a stop on
-   fractional shares, write the stop down and check the price each afternoon;
-   sell if it closes below.
-5. For a SELL, sell all shares of that ticker and cancel its stop order.
-6. Tell the team what you hold. Once you fund the account, copy the example
-   file and edit it after every trade:
+   place a REJECTED one or change the numbers.
+3. To buy the option in the Robinhood app (Agentic account): open the stock,
+   **Trade → Trade Options**, pick the **expiration date** and **Call** or
+   **Put** exactly as shown, tap the **strike**, choose **Buy**, set the
+   number of contracts and a **limit price** equal to the one shown.
+4. Once it fills, protect it with the **exit plan** printed under the order:
+   - Stop: place a **stop-limit sell** at the stop price if the app offers it;
+     otherwise check the option each afternoon and sell if it is at or below
+     the stop.
+   - Take profit: a **limit sell** at the take-profit price (good till canceled).
+   - Time: sell by the "sell by" date no matter what.
+   Robinhood allows only one open sell order per contract, so choose the stop
+   or the take-profit order and watch the other level yourself.
+5. For a SELL instruction, close the whole option position and cancel its
+   open orders.
+6. Tell the team what you hold: copy the example file and edit it after every
+   trade:
 
    ```bash
    cp config/account.example.toml data/account.toml
    open -e data/account.toml
    ```
 
-   Set equity and cash to what the app shows, and list each open position with
-   its entry, stop and target. The team then reviews your positions every run.
-   This file stays in `HedgeFund/data/` and is never uploaded.
+   Set equity and cash to what the app shows. For an option position use the
+   contract as the ticker (for example `ticker = "NVDA 2026-11-06 180 CALL"`),
+   the number of contracts as shares, and the premium you paid as entry.
 
-Skipping a trade is always allowed. The desk holds one position at a time with
-all available cash in it. The Gatekeeper only approves stops within 10% of
-entry, so a stopped-out trade loses up to about 10% of the account ($10 on
-$100); a gap down overnight can lose more.
+Skipping a trade is always allowed. Every trade uses all available cash, and
+its cost is the most it can lose: the 15% stop limits a normal loss to about
+15%, but an option can gap through the stop, and if the stop is not honoured
+an option can expire worthless.
 
 ---
 

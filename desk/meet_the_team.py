@@ -38,6 +38,15 @@ def _print_run(run: TeamRun) -> None:
         a = run.pm
         print(f"\n--- Portfolio Manager  [{a.model_served or a.model_requested}, prompt {a.prompt_version}, ${a.cost_usd:.4f}]")
         print(json.dumps(a.report.model_dump(), indent=2) if a.report else f"FAILED: {a.error}")
+    if run.options_menu is not None:
+        print("\n--- Options menu (code picked one contract per candidate)")
+        for t, m in run.options_menu.items():
+            c = m["contract"]
+            if c:
+                print(f"  {t} {m['direction']}: {c['type'].upper()} ${c['strike']:g} exp {c['expiry']} "
+                      f"({c['days_to_expiry']}d), delta {c['delta']}, ${c['cost_per_contract']:.0f}/contract")
+            else:
+                print(f"  {t} {m['direction']}: none ({m['note']})")
     if run.gate:
         _print_gate(run.gate)
     if run.stopped_reason:
@@ -73,12 +82,24 @@ def _print_gate(gate) -> None:
         return
     print("\nAPPROVED ORDERS (place these yourself in the Robinhood Agentic account):")
     for o in gate.approved:
-        if o.action == "buy":
+        if hasattr(o, "contract_symbol"):
+            kind = o.option_type.upper()
+            print(f"  BUY {o.contracts} x {o.ticker} {o.expiry} ${o.strike:g} {kind}"
+                  f"  LIMIT ${o.limit_price:.2f} per share (${o.cost_usd:.2f} total)\n"
+                  f"       contract {o.contract_symbol}\n"
+                  f"       EXIT PLAN: sell if the option falls to ${o.stop_price:.2f} "
+                  f"(-{round((1 - o.stop_price / o.limit_price) * 100)}% stop), "
+                  f"take profit at ${o.take_profit_price:.2f}, sell by {o.exit_by} at the latest\n"
+                  f"       stock view: entry {o.stock_entry}, wrong below/above {o.stock_stop}, "
+                  f"target {o.stock_target}")
+        elif o.action == "buy":
             print(f"  BUY  {o.ticker}: {o.shares} shares, LIMIT ${o.limit_price:.2f} (${o.notional_usd:.2f})\n"
                   f"       then set STOP ${o.stop_price:.2f}; target ${o.target_price:.2f}; "
                   f"reward-to-risk {o.reward_risk}; max loss ${o.risk_usd:.2f}")
-        else:
+        elif o.shares:
             print(f"  SELL {o.ticker}: all {o.shares} shares (last price ${o.limit_price:.2f})")
+        else:
+            print(f"  SELL {o.ticker}: close the whole position ({o.reason})")
 
 
 def _save(run: TeamRun) -> Path:
@@ -132,7 +153,9 @@ def main() -> None:
         ref = str(done["SPY"].index[-1].date()) if "SPY" in done else None
         tech = market_data.technical_packet(done, universe, ref, live)
         scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
-                               settings.min_price, settings.min_dollar_volume)
+                               settings.min_price, settings.min_dollar_volume,
+                               directions=("bullish", "bearish") if settings.instrument == "options"
+                               else ("bullish",))
         print(json.dumps(market_data.regime_packet(
             bars, list(settings.regime_symbols), list(settings.sector_etfs), universe), indent=1, default=str))
         _print_scan(scan, len(universe), sum(1 for t in universe if t in bars))

@@ -5,6 +5,25 @@
 # Paper account used by `meet_the_team` until Robinhood is connected.
 paper_equity = 100.0
 
+[strategy]
+# "options": long calls and long puts only (bullish view -> call, bearish -> put).
+# "stock": long stock only.
+instrument = "options"
+
+[options]
+# How code picks the one contract offered for each candidate.
+min_days_to_expiry = 21        # enough time for a 2-15 day swing
+max_days_to_expiry = 60
+target_delta = 0.55            # near the money: moves with the stock, slower decay
+min_delta = 0.35
+max_delta = 0.75
+max_spread_pct = 0.12          # (ask - bid) / mid
+min_open_interest = 100
+# Exit plan for every option position (shown with each approved order):
+stop_loss_pct = 0.15           # sell if the option loses 15% of what was paid
+take_profit_pct = 1.00         # sell if the option doubles
+exit_days_before_expiry = 7    # never hold into the last week (fastest decay)
+
 [universe]
 # The desk scans the core list below plus (if include_sp500) every S&P 500 stock.
 # Only tickers in that universe can ever be analysed or traded.
@@ -57,7 +76,8 @@ portfolio_manager = "high"
 
 [prompts]
 # Prompt version per role: prompts/<role>/<version>.md
-technical_analyst = "v4"   # v4: reward-to-risk minimum comes from config
+technical_analyst = "v5"   # v5: bullish or bearish direction, for calls and puts
 catalyst_analyst = "v1"
 regime_analyst = "v1"
-portfolio_manager = "v3"   # v3: all-in, conviction 3 acceptable
+portfolio_manager = "v3"   # v3: all-in, conviction 3 acceptable (stock mode)
+portfolio_manager_options = "options_v1"   # options mode

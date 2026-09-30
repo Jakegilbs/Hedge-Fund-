@@ -14,12 +14,12 @@ from typing import Callable
 
 import pandas as pd
 
-from . import gatekeeper, market_data
+from . import gatekeeper, market_data, options
 from .config import Settings
 from .llm import AgentResult, ClaudeRunner
 from .prompts import load_prompt
 from .scanner import ScanResult, pick_candidates
-from .schemas import CatalystReport, PMDecision, RegimeReport, TechnicalReport
+from .schemas import CatalystReport, OptionsDecision, PMDecision, RegimeReport, TechnicalReport
 
 ANALYST_MAX_TOKENS = 8000
 PM_MAX_TOKENS = 16000
@@ -66,6 +66,7 @@ class TeamRun:
     scan: ScanResult | None = None
     stopped_reason: str | None = None
     data: dict = field(default_factory=dict)
+    options_menu: dict | None = None
 
     @property
     def agents(self) -> list[AgentResult]:
@@ -95,10 +96,12 @@ def _check_reports(run: "TeamRun", candidates: list[str], min_rr: float) -> None
         if missing:
             report.warnings.append(f"code: no view returned for: {', '.join(missing)}")
     for v in run.analysts["technical_analyst"].report.views:
-        if v.entry and v.stop and v.target and v.entry > v.stop:
-            v.reward_risk_checked = round((v.target - v.entry) / (v.entry - v.stop), 2)
-        else:
-            v.reward_risk_checked = None
+        bearish = getattr(v, "direction", "bullish") == "bearish"
+        risk = (v.stop - v.entry) if (bearish and v.entry and v.stop) else \
+               (v.entry - v.stop) if (v.entry and v.stop) else 0
+        reward = (v.entry - v.target) if (bearish and v.entry and v.target) else \
+                 (v.target - v.entry) if (v.entry and v.target) else 0
+        v.reward_risk_checked = round(reward / risk, 2) if risk > 0 and reward > 0 else None
         if v.recommendation == "candidate" and (v.reward_risk_checked or 0) < min_rr:
             v.recommendation = "watch"
             v.risks += (f" [code: reward-to-risk {v.reward_risk_checked} is below {min_rr:g}, "
@@ -109,7 +112,8 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
              bars: dict[str, pd.DataFrame],
              fetch_catalysts: Callable[[list[str]], dict] = market_data.catalyst_packet,
              tickers: list[str] | None = None, time_et: str | None = None,
-             now: datetime | None = None, universe: list[str] | None = None) -> TeamRun:
+             now: datetime | None = None, universe: list[str] | None = None,
+             fetch_option_chains=options.fetch_chains) -> TeamRun:
     """Run the team once. `tickers` overrides the scanner (for testing prompts)."""
     now = now or datetime.now(ZoneInfo("America/New_York"))
     time_et = time_et or now.strftime("%Y-%m-%d %H:%M")
@@ -125,8 +129,9 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         candidates = sorted(set(t.upper() for t in tickers) | set(account.held))
         scan = None
     else:
+        directions = ("bullish", "bearish") if settings.instrument == "options" else ("bullish",)
         scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
-                               settings.min_price, settings.min_dollar_volume)
+                               settings.min_price, settings.min_dollar_volume, directions=directions)
         candidates = scan.candidates
 
     run = TeamRun(time_et=time_et, candidates=candidates, scan=scan)
@@ -169,11 +174,17 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
 
     _check_reports(run, candidates, settings.risk.min_reward_risk)
     tradeable = [v.ticker for v in run.analysts["technical_analyst"].report.views
-                 if v.recommendation == "candidate" and v.data_ok]
+                 if v.recommendation == "candidate" and v.data_ok
+                 and (v.direction in ("bullish", "bearish") if settings.instrument == "options"
+                      else v.direction != "bearish")]
     if not tradeable and not account.held:
         run.stopped_reason = ("no trade possible: the Technical Analyst rated nothing a 'candidate' and "
                               "nothing is held, so the Portfolio Manager was skipped (no PM cost)")
         return run
+
+    if settings.instrument == "options":
+        return _options_pm(run, settings, runner, account, allow, tech_all, tradeable, now,
+                           fetch_option_chains)
 
     risk = settings.risk
     pm_prompt = load_prompt("portfolio_manager", settings.prompt_versions["portfolio_manager"])
@@ -213,4 +224,53 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         allowlist=set(allow), risk=risk,
         regime=run.analysts["regime_analyst"].report,
         catalysts=run.analysts["catalyst_analyst"].report)
+    return run
+
+
+def _options_pm(run: TeamRun, settings: Settings, runner: ClaudeRunner, account: AccountState,
+                allow: list[str], tech_all: dict, tradeable: list[str], now: datetime,
+                fetch_option_chains) -> TeamRun:
+    """Options mode: code builds the contract menu, the PM picks at most one long call or put."""
+    tech_rep = run.analysts["technical_analyst"].report
+    news_rep = run.analysts["catalyst_analyst"].report
+    earnings = {v.ticker.upper(): v.next_earnings for v in news_rep.views}
+    views = {v.ticker.upper(): v for v in tech_rep.views}
+    snaps = tech_all["tickers"]
+    picks = [{"ticker": t, "direction": views[t].direction,
+              "spot": snaps[t]["live_price"] or snaps[t]["close"], "earnings": earnings.get(t)}
+             for t in (x.upper() for x in tradeable) if t in snaps]
+    run.options_menu = options.options_menu(picks, account.cash, settings.options, now.date(),
+                                            fetch=fetch_option_chains)
+    offered = {t: m for t, m in run.options_menu.items() if m["contract"]}
+    if not offered and not account.held:
+        notes = "; ".join(f"{t}: {m['note']}" for t, m in run.options_menu.items())
+        run.stopped_reason = f"no suitable option contract, PM skipped (no PM cost). {notes}"
+        return run
+
+    risk, opts = settings.risk, settings.options
+    prompt = load_prompt("portfolio_manager", settings.prompt_versions["portfolio_manager_options"])
+    rendered = prompt.render(
+        time_et=run.time_et, equity=f"${account.equity:,.2f}", cash=f"${account.cash:,.2f}",
+        pnl_today=f"${account.pnl_today:,.2f}", positions=account.positions or "none",
+        trade_history=account.trade_history or "none yet",
+        max_open_positions=str(risk.max_open_positions),
+        stop_loss_pct=f"{opts.stop_loss_pct * 100:g}", take_profit_pct=f"{opts.take_profit_pct * 100:g}",
+        exit_days=str(opts.exit_days_before_expiry), min_conviction=str(risk.min_conviction),
+        min_reward_risk=f"{risk.min_reward_risk:g}", daily_halt_pct=f"{risk.daily_halt_pct * 100:g}",
+        allowlist=(f"{len(allow)} pre-approved tickers (S&P 500 and major ETFs); every ticker in the "
+                   "analyst reports is on it."),
+        regime_report=run.analysts["regime_analyst"].report.model_dump(),
+        technical_report=tech_rep.model_dump(), catalyst_report=news_rep.model_dump(),
+        options_menu=run.options_menu,
+    )
+    run.pm = runner.run(prompt, rendered, OptionsDecision, settings.models["portfolio_manager"],
+                        effort=settings.effort.get("portfolio_manager"), max_tokens=PM_MAX_TOKENS)
+    if not run.pm.ok:
+        run.stopped_reason = f"PM decision unusable, no trades: {run.pm.error}"
+        return run
+    run.gate = gatekeeper.check_options(
+        run.pm.report, cash=account.cash, pnl_today=account.pnl_today, equity=account.equity,
+        open_positions=len(account.positions), menu=run.options_menu, technical=tech_rep,
+        catalysts=news_rep, regime=run.analysts["regime_analyst"].report, risk=risk, opts=opts,
+        allowlist=set(allow))
     return run

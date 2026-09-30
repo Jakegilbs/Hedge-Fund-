@@ -52,7 +52,7 @@ def setup_breakout(df: pd.DataFrame) -> dict | None:
     a = float(atr(df).iloc[-1])
     entry = max(float(h.iloc[-1]), prior_high)
     stop = min(float(l.iloc[-1]), entry - 1.1 * a)
-    return {"setup": "breakout", "pivot": _r(prior_high), "entry": _r(entry), "stop": _r(stop),
+    return {"setup": "breakout", "direction": "bullish", "pivot": _r(prior_high), "entry": _r(entry), "stop": _r(stop),
             "volume_vs_20d": _r(vol_x)}
 
 
@@ -70,7 +70,7 @@ def setup_pullback(df: pd.DataFrame) -> dict | None:
     a = float(atr(df).iloc[-1])
     entry = float(h.iloc[-1])
     stop = min(float(l.rolling(5).min().iloc[-1]), entry - 1.25 * a)
-    return {"setup": "pullback", "entry": _r(entry), "stop": _r(stop), "ema20": _r(float(e20.iloc[-1]))}
+    return {"setup": "pullback", "direction": "bullish", "entry": _r(entry), "stop": _r(stop), "ema20": _r(float(e20.iloc[-1]))}
 
 
 def setup_vcp(df: pd.DataFrame) -> dict | None:
@@ -85,11 +85,45 @@ def setup_vcp(df: pd.DataFrame) -> dict | None:
         return None
     a = float(atr(df).iloc[-1])
     pivot = float(h.rolling(20).max().iloc[-1])
-    return {"setup": "vcp", "pivot": _r(pivot), "entry": _r(pivot), "stop": _r(pivot - 1.5 * a),
+    return {"setup": "vcp", "direction": "bullish", "pivot": _r(pivot), "entry": _r(pivot), "stop": _r(pivot - 1.5 * a),
             "atr_pct_rank": _r(atrp_rank)}
 
 
-SETUPS = (setup_breakout, setup_pullback, setup_vcp)
+def setup_breakdown(df: pd.DataFrame) -> dict | None:
+    """Close at or below the prior 52-week closing low on above-average volume (bearish)."""
+    if len(df) < 200:
+        return None
+    c, h, l, v = df["Close"], df["High"], df["Low"], df["Volume"]
+    prior_low = float(c.shift(1).rolling(252, min_periods=120).min().iloc[-1])
+    vol_x = float(v.iloc[-1] / (v.rolling(20, min_periods=10).mean().iloc[-1] or 1))
+    if not (c.iloc[-1] <= prior_low * 1.005 and vol_x >= 1.15):
+        return None
+    a = float(atr(df).iloc[-1])
+    entry = min(float(l.iloc[-1]), prior_low)
+    stop = max(float(h.iloc[-1]), entry + 1.1 * a)
+    return {"setup": "breakdown", "direction": "bearish", "pivot": _r(prior_low), "entry": _r(entry),
+            "stop": _r(stop), "volume_vs_20d": _r(vol_x)}
+
+
+def setup_bear_rally(df: pd.DataFrame) -> dict | None:
+    """Downtrend (close < EMA50 < SMA200) bouncing into EMA20 (within 2%) and turning down (bearish)."""
+    if len(df) < 220:
+        return None
+    c, h = df["Close"], df["High"]
+    e20, e50, s200 = ema(c, 20), ema(c, 50), sma(c, 200)
+    downtrend = c.iloc[-1] < e50.iloc[-1] < s200.iloc[-1]
+    near20 = abs(c.iloc[-1] - e20.iloc[-1]) / e20.iloc[-1] < 0.02
+    turning = c.iloc[-1] < c.iloc[-2]
+    if not (downtrend and near20 and turning):
+        return None
+    a = float(atr(df).iloc[-1])
+    entry = float(df["Low"].iloc[-1])
+    stop = max(float(h.rolling(5).max().iloc[-1]), entry + 1.25 * a)
+    return {"setup": "bear_rally", "direction": "bearish", "entry": _r(entry), "stop": _r(stop),
+            "ema20": _r(float(e20.iloc[-1]))}
+
+
+SETUPS = (setup_breakout, setup_pullback, setup_vcp, setup_breakdown, setup_bear_rally)
 
 
 def trend_facts(c: pd.Series) -> dict:
@@ -140,6 +174,7 @@ def snapshot(df: pd.DataFrame) -> dict:
         "high_52w": _r(hi_252),
         "low_52w": _r(lo_252),
         "pct_from_52w_high": _r((last / hi_252 - 1) * 100),
+        "pct_from_52w_low": _r((last / lo_252 - 1) * 100),
         "volume_vs_20d": _r(float(v.iloc[-1]) / vol20) if vol20 else None,
         "avg_dollar_volume_20d": _r(float((c * v).tail(20).mean()), 0),
         "last_10_closes": [_r(float(x)) for x in c.tail(10)],

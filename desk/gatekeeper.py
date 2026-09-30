@@ -144,3 +144,95 @@ def check(decision: PMDecision, *, equity: float, cash: float, pnl_today: float,
             notional, round(shares * (entry - stop), 2),
             reason=f"PM conviction {o.conviction}/5 (PM proposed {o.shares} shares)"))
     return result
+
+
+# ---------- options mode: long calls and long puts only ----------
+
+@dataclass
+class ApprovedOptionOrder:
+    ticker: str
+    contract_symbol: str
+    option_type: str            # "call" or "put"
+    strike: float
+    expiry: str
+    contracts: int
+    limit_price: float          # per share; one contract = 100 shares
+    cost_usd: float
+    stop_price: float           # sell if the option falls to this
+    take_profit_price: float    # sell if the option rises to this
+    exit_by: str                # sell by this date regardless
+    stock_entry: float | None = None
+    stock_stop: float | None = None
+    stock_target: float | None = None
+    reason: str = ""
+
+
+def check_options(decision, *, cash: float, pnl_today: float, equity: float, open_positions: int,
+                  menu: dict[str, dict], technical, catalysts: CatalystReport, regime: RegimeReport,
+                  risk: RiskLimits, opts, allowlist: set[str]) -> GateResult:
+    """Approve at most one long call or put from the options menu, sized with all available cash."""
+    from datetime import date, timedelta
+
+    result = GateResult()
+    event_risk = {v.ticker.upper(): v.event_risk for v in catalysts.views}
+    views = {v.ticker.upper(): v for v in technical.views}
+
+    for u in decision.position_updates:
+        if u.decision == "exit":
+            result.approved.append(ApprovedOrder("sell", u.ticker.upper(), 0.0, 0.0,
+                                                 reason=f"PM exit: {u.reason}"))
+
+    if pnl_today <= risk.daily_halt_pct * equity:
+        result.halted = f"daily halt: P&L ${pnl_today:.2f}"
+    slots = max(0, risk.max_open_positions - open_positions)
+
+    for o in sorted(decision.orders, key=lambda o: -o.conviction):
+        t = o.ticker.upper()
+        reasons: list[str] = []
+        entry = menu.get(t) or {}
+        contract = entry.get("contract")
+        view = views.get(t)
+        if result.halted:
+            reasons.append(f"no new entries: {result.halted}")
+        if t not in allowlist:
+            reasons.append("not on the allowlist")
+        if contract is None:
+            reasons.append("no contract on the options menu for this ticker")
+        elif contract["contract_symbol"] != o.contract_symbol:
+            reasons.append(f"contract {o.contract_symbol} is not the one on the menu ({contract['contract_symbol']})")
+        elif (contract["type"] == "call") != (o.direction == "bullish"):
+            reasons.append("direction does not match the contract type")
+        if o.conviction < risk.min_conviction:
+            reasons.append(f"conviction {o.conviction}/5 below the minimum {risk.min_conviction}")
+        if view is None or view.recommendation != "candidate" or view.direction != o.direction:
+            reasons.append("the Technical Analyst does not rate this a candidate in this direction")
+        elif (view.reward_risk_checked or 0) < risk.min_reward_risk:
+            reasons.append(f"stock reward-to-risk {view.reward_risk_checked} below {risk.min_reward_risk}")
+        if event_risk.get(t) == "high":
+            reasons.append("news analyst rates event risk high")
+        elif t not in event_risk:
+            reasons.append("no news/catalyst report for this ticker")
+        if o.direction == "bullish" and regime.posture == "flat":
+            reasons.append("no calls while the market regime posture is flat")
+        if not reasons and slots <= 0:
+            reasons.append("one position at a time: a position is already open")
+        contracts = 0
+        if not reasons:
+            contracts = int(cash * 0.995 // (contract["limit_price"] * 100))
+            if contracts < 1:
+                reasons.append(f"one contract costs ${contract['limit_price'] * 100:,.2f}; cash is ${cash:,.2f}")
+        if reasons:
+            result.rejected.append(Rejection(t, f"buy {o.direction} option", reasons))
+            continue
+        price = contract["limit_price"]
+        exit_by = date.fromisoformat(contract["expiry"]) - timedelta(days=opts.exit_days_before_expiry)
+        slots -= 1
+        result.approved.append(ApprovedOptionOrder(
+            ticker=t, contract_symbol=contract["contract_symbol"], option_type=contract["type"],
+            strike=contract["strike"], expiry=contract["expiry"], contracts=contracts, limit_price=price,
+            cost_usd=round(contracts * price * 100, 2),
+            stop_price=round(price * (1 - opts.stop_loss_pct), 2),
+            take_profit_price=round(price * (1 + opts.take_profit_pct), 2),
+            exit_by=exit_by.isoformat(), stock_entry=view.entry, stock_stop=view.stop, stock_target=view.target,
+            reason=f"PM conviction {o.conviction}/5"))
+    return result

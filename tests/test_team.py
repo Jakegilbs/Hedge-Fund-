@@ -3,11 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from dataclasses import replace
+
 from desk.config import load_settings
 from desk.llm import ClaudeRunner, cost_usd
 from desk.schemas import (CatalystReport, CatalystView, PMDecision, RegimeReport, TechnicalReport,
                           TechnicalView)
 from desk.team import AccountState, run_team
+
+STOCK = replace(load_settings(), instrument="stock")   # these tests cover stock mode
 
 REPORTS = {
     TechnicalReport: TechnicalReport(views=[TechnicalView(
@@ -56,7 +60,7 @@ def no_news(tickers, etfs=frozenset()):
 
 def test_full_run_calls_three_analysts_then_pm(bars):
     runner, msgs = fake_runner()
-    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news,
+    run = run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news,
                    time_et="2026-09-29 10:00")
     assert run.candidates == ["NVDA"]
     assert run.stopped_reason is None and run.pm.ok
@@ -72,7 +76,7 @@ def test_full_run_calls_three_analysts_then_pm(bars):
 
 def test_haiku_analysts_get_no_effort_or_fallback(bars):
     runner, msgs = fake_runner()
-    run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     haiku = [c for c in msgs.calls if c["model"] == "claude-haiku-4-5"]
     assert len(haiku) == 3
     assert all("fallbacks" not in c and "effort" not in c["output_config"] for c in haiku)
@@ -81,13 +85,13 @@ def test_haiku_analysts_get_no_effort_or_fallback(bars):
 def test_quiet_day_costs_nothing(bars):
     runner, msgs = fake_runner()
     bars = {k: v for k, v in bars.items() if k != "NVDA"}
-    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    run = run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     assert run.stopped_reason.startswith("quiet day") and msgs.calls == []
 
 
 def test_failed_analyst_stops_before_pm_but_cost_is_counted(bars):
     runner, msgs = fake_runner(fail_schema=RegimeReport)
-    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    run = run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     assert run.pm is None and "regime_analyst" in run.stopped_reason
     assert run.analysts["regime_analyst"].cost_usd > 0
     assert all(c["schema"] is not PMDecision for c in msgs.calls)
@@ -95,14 +99,14 @@ def test_failed_analyst_stops_before_pm_but_cost_is_counted(bars):
 
 def test_cut_off_reply_is_rejected(bars):
     runner, _ = fake_runner(stop_reason="max_tokens")
-    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    run = run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     assert run.pm is None and "max_tokens" in run.stopped_reason
 
 
 def test_tickers_outside_allowlist_rejected(bars):
     runner, _ = fake_runner()
     with pytest.raises(ValueError):
-        run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news, tickers=["GME"])
+        run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news, tickers=["GME"])
 
 
 def test_cost_math():
@@ -133,7 +137,7 @@ def test_pm_skipped_when_no_technical_candidate(bars, monkeypatch):
     watch_only.views[0].recommendation = "watch"
     monkeypatch.setitem(REPORTS, TechnicalReport, watch_only)
     runner, msgs = fake_runner()
-    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    run = run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     assert run.pm is None and "Portfolio Manager was skipped" in run.stopped_reason
     assert len(msgs.calls) == 3          # three analysts, no PM call
 
@@ -144,7 +148,7 @@ def test_pm_still_runs_for_open_positions(bars, monkeypatch):
     monkeypatch.setitem(REPORTS, TechnicalReport, watch_only)
     runner, _ = fake_runner()
     held = AccountState(100, 0, positions=[{"ticker": "AAPL", "shares": 0.5}])
-    run = run_team(load_settings(), runner, held, bars, fetch_catalysts=no_news)
+    run = run_team(STOCK, runner, held, bars, fetch_catalysts=no_news)
     assert run.pm is not None
 
 
@@ -155,7 +159,7 @@ def test_code_checks_reward_risk_and_drops_invented_tickers(bars, monkeypatch):
     bad.views.append(invented)
     monkeypatch.setitem(REPORTS, TechnicalReport, bad)
     runner, msgs = fake_runner()
-    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    run = run_team(STOCK, runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
     tech = run.analysts["technical_analyst"].report
     assert [v.ticker for v in tech.views] == ["NVDA"]
     assert tech.views[0].recommendation == "watch" and tech.views[0].reward_risk_checked == 0.2

@@ -18,11 +18,15 @@ class TechnicalView(BaseModel):
     ticker: str
     data_ok: bool = Field(description="False if data is stale, missing or inconsistent")
     trend: Literal["up", "down", "sideways"]
-    setup: Literal["breakout", "pullback", "vcp", "other", "none"]
+    direction: Literal["bullish", "bearish", "none"] = Field(
+        default="bullish", description="Which way you expect the stock to move over 2-15 trading days")
+    setup: Literal["breakout", "pullback", "vcp", "breakdown", "bear_rally", "other", "none"]
     setup_quality: Literal[0, 1, 2, 3, 4, 5] = Field(description="0 = no setup, 1 = weak, 5 = textbook")
-    entry: Optional[float] = Field(description="Proposed limit entry price, or null if no trade")
-    stop: Optional[float] = Field(description="Price where the setup is proven wrong")
-    target: Optional[float] = Field(description="Realistic 2-15 trading day objective")
+    entry: Optional[float] = Field(description="Stock price where the trade triggers, or null if no trade")
+    stop: Optional[float] = Field(description="Stock price where the view is proven wrong "
+                                              "(below entry if bullish, above if bearish)")
+    target: Optional[float] = Field(description="Realistic 2-15 trading day stock objective "
+                                                "(above entry if bullish, below if bearish)")
     key_levels: list[str] = Field(description="Support/resistance levels with a few words each")
     evidence: str = Field(description="1-3 sentences citing the numbers provided")
     risks: str = Field(description="What would invalidate the setup")
@@ -93,6 +97,25 @@ class PositionUpdate(BaseModel):
 class PMDecision(BaseModel):
     market_view: str
     orders: list[Order]
+    position_updates: list[PositionUpdate]
+    warnings: list[str]
+    honest_assessment: str
+
+
+# ---------- Portfolio Manager, options mode (long calls and puts only) ----------
+
+class OptionOrder(BaseModel):
+    ticker: str
+    direction: Literal["bullish", "bearish"]
+    contract_symbol: str = Field(description="Exactly one contract_symbol from the options menu")
+    thesis: str
+    bear_case: str = Field(description="Strongest argument against this trade")
+    conviction: Literal[1, 2, 3, 4, 5]
+
+
+class OptionsDecision(BaseModel):
+    market_view: str
+    orders: list[OptionOrder] = Field(description="At most one new position")
     position_updates: list[PositionUpdate]
     warnings: list[str]
     honest_assessment: str

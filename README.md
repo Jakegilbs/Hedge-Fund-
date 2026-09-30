@@ -1,10 +1,13 @@
 # Hedge Fund
 
 An AI analyst team that swing-trades (2–15 day holds) a small Robinhood Agentic
-account. Three analysts research, a portfolio manager picks the single best
-high-conviction trade, and code (not AI) sizes it with all available cash and
-enforces every limit: one position at a time, stop within 10% of entry,
-conviction 3+/5, reward-to-risk 1.5+.
+account using **long calls and long puts only**. Three analysts research
+bullish and bearish setups, code picks one liquid, affordable contract per
+candidate, a portfolio manager chooses at most one, and code (not AI) sizes it
+with all available cash and enforces every limit: one position at a time,
+conviction 3+/5, stock reward-to-risk 1.5+, no earnings inside the option's
+life, and an exit plan on every trade (-15% stop, +100% take profit, out a week
+before expiry). Set `instrument = "stock"` in `config/desk.toml` to trade shares instead.
 
 **Status: Level 1 (you approve and place every trade).** The analyst team runs
 on real market data, the Gatekeeper checks and sizes every order, and you place
@@ -71,7 +74,8 @@ desk/scanner.py         ranks setups and picks which tickers the analysts see
 desk/schemas.py         report format for each team member
 desk/llm.py             one Claude call per agent, with cost tracking
 desk/team.py            runs the team, fail-safe
-desk/gatekeeper.py      recomputes sizes, enforces every limit
+desk/options.py         picks the option contract (expiry, strike, liquidity, cost)
+desk/gatekeeper.py      recomputes sizes, enforces every limit (stock and options)
 desk/meet_the_team.py   command-line entry point
 tests/                  offline tests with a fake Claude client
 ```

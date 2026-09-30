@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from .options import OptionsConfig
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config" / "desk.toml"
 ENV_FILE = ROOT / ".env"
@@ -44,6 +46,8 @@ class Settings:
     max_candidates: int = 8
     min_price: float = 10.0
     min_dollar_volume: float = 50_000_000
+    instrument: str = "stock"            # "stock" or "options" (long calls and puts only)
+    options: "OptionsConfig" = None      # set by load_settings
 
     @property
     def etfs(self) -> set[str]:
@@ -57,6 +61,10 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
     missing = [r for r in ROLES if r not in raw["models"] or r not in raw["prompts"]]
     if missing:
         raise ValueError(f"config is missing model or prompt version for: {missing}")
+    if raw.get("strategy", {}).get("instrument") == "options" and "portfolio_manager_options" not in raw["prompts"]:
+        raise ValueError("options mode needs prompts.portfolio_manager_options")
+    if raw.get("strategy", {}).get("instrument", "stock") not in ("stock", "options"):
+        raise ValueError('strategy.instrument must be "stock" or "options"')
     return Settings(
         paper_equity=float(raw["account"]["paper_equity"]),
         allowlist=tuple(s.upper() for s in raw["universe"]["allowlist"]),
@@ -70,6 +78,8 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         max_candidates=int(raw["universe"].get("max_candidates", 8)),
         min_price=float(raw["universe"].get("min_price", 10.0)),
         min_dollar_volume=float(raw["universe"].get("min_dollar_volume", 50_000_000)),
+        instrument=str(raw.get("strategy", {}).get("instrument", "stock")),
+        options=OptionsConfig(**raw.get("options", {})),
     )
 
 

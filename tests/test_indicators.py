@@ -84,7 +84,7 @@ def test_leaders_fill_empty_slots_when_few_setups():
              "FAR": _snap(40, setups=0, from_high=-12), "DOWN": _snap(50, setups=0, trend="down")}
     scan = pick_candidates(snaps, held=[], max_candidates=3)
     assert scan.candidates == ["LEAD1", "LEAD2", "SET"]
-    assert scan.why["SET"].startswith("coded setup") and scan.why["LEAD1"].startswith("leader")
+    assert scan.why["SET"].startswith("bullish coded setup") and scan.why["LEAD1"].startswith("leader")
     assert scan.setup_counts == {"breakout": 1}
 
 
@@ -107,3 +107,24 @@ def test_ranking_is_relative_to_spy():
     laggard = {**_snap(0), "change_pct": {"20d": 1.0, "60d": 12.0}}    # -4 / +2 vs SPY
     scan = pick_candidates({"SPY": spy, "STEADY": steady, "LAG": laggard}, held=[], max_candidates=1)
     assert scan.candidates == ["STEADY"]
+
+
+def test_bearish_side_only_when_puts_allowed():
+    laggard = {**_snap(-20, setups=0, trend="down"), "pct_from_52w_low": 2.0, "rsi14": 35.0, "atr_pct": 2.0,
+               "change_pct": {"20d": -8.0, "60d": -20.0}}
+    leader = {**_snap(20, setups=0), "rsi14": 60.0, "atr_pct": 2.0}
+    snaps = {"LAG": laggard, "LEAD": leader}
+    assert pick_candidates(snaps, held=[]).candidates == ["LEAD"]
+    both = pick_candidates(snaps, held=[], directions=("bullish", "bearish"))
+    assert both.candidates == ["LAG", "LEAD"] and both.direction == {"LAG": "bearish", "LEAD": "bullish"}
+
+
+def test_bearish_breakdown_setup_detected():
+    from desk.indicators import setup_breakdown
+    df = make_bars(drift=-0.0008, seed=12)
+    prior_low = df["Close"].iloc[:-1].min()
+    df.iloc[-1, df.columns.get_loc("Close")] = prior_low * 0.99
+    df.iloc[-1, df.columns.get_loc("Low")] = prior_low * 0.985
+    df.iloc[-1, df.columns.get_loc("Volume")] = df["Volume"].iloc[-21:-1].mean() * 2
+    hit = setup_breakdown(df)
+    assert hit and hit["direction"] == "bearish" and hit["stop"] > hit["entry"]
