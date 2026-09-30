@@ -19,7 +19,8 @@ from .config import Settings
 from .llm import AgentResult, ClaudeRunner
 from .prompts import load_prompt
 from .scanner import ScanResult, pick_candidates
-from .schemas import CatalystReport, OptionsDecision, PMDecision, RegimeReport, TechnicalReport
+from .schemas import (CatalystReport, HybridDecision, OptionsDecision, PMDecision, RegimeReport,
+                      TechnicalReport)
 
 ANALYST_MAX_TOKENS = 8000
 UPSIDE_WEIGHT = 3.0   # options mode: ranking points per 1% of average daily range
@@ -78,23 +79,33 @@ class TeamRun:
         return round(sum(a.cost_usd for a in self.agents), 4)
 
 
+def _needs_option(settings: Settings, direction: str) -> bool:
+    """Options mode: every trade is an option. Hybrid: bullish trades can fall back to
+    fractional shares, bearish trades need a put."""
+    return settings.instrument == "options" or (settings.instrument == "hybrid" and direction == "bearish")
+
+
 def options_affordable(settings: Settings, cash: float):
-    """Options mode: a filter that keeps only stocks whose near-the-money option fits the cash."""
-    if settings.instrument != "options":
+    """Keep only stocks whose near-the-money option fits the cash, where an option is required."""
+    if not settings.uses_options:
         return None
 
-    def ok(snap: dict) -> bool:
+    def ok(snap: dict, direction: str = "bullish") -> bool:
+        if not _needs_option(settings, direction):
+            return True
         est = options.estimated_atm_cost(snap.get("live_price") or snap["close"], snap.get("atr_pct"))
         return est is not None and est <= cash
     return ok
 
 
 def options_tradeable(settings: Settings, cash: float, snapshots: dict, now: datetime, fetch):
-    """Options mode: only send stocks that have a liquid, affordable contract right now."""
-    if settings.instrument != "options":
+    """Only send stocks that have a liquid, affordable contract right now, where an option is required."""
+    if not settings.uses_options:
         return None
 
     def ok(ticker: str, direction: str) -> bool:
+        if not _needs_option(settings, direction):
+            return True
         snap = snapshots[ticker]
         return options.has_tradeable_contract(ticker, direction, snap.get("live_price") or snap["close"],
                                               cash, settings.options, now.date(), fetch=fetch)
@@ -153,11 +164,11 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         candidates = sorted(set(t.upper() for t in tickers) | set(account.held))
         scan = None
     else:
-        directions = ("bullish", "bearish") if settings.instrument == "options" else ("bullish",)
+        directions = ("bullish", "bearish") if settings.uses_options else ("bullish",)
         scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
                                settings.scan_min_price, settings.scan_min_dollar_volume, directions=directions,
                                affordable=options_affordable(settings, account.cash),
-                               upside_weight=UPSIDE_WEIGHT if settings.instrument == "options" else 0.0,
+                               upside_weight=UPSIDE_WEIGHT if settings.uses_options else 0.0,
                                tradeable=options_tradeable(settings, account.cash, tech_all["tickers"], now,
                                                            fetch_option_chains),
                                max_checks=settings.options_max_checks)
@@ -204,14 +215,14 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     _check_reports(run, candidates, settings.risk.min_reward_risk)
     tradeable = [v.ticker for v in run.analysts["technical_analyst"].report.views
                  if v.recommendation == "candidate" and v.data_ok
-                 and (v.direction in ("bullish", "bearish") if settings.instrument == "options"
+                 and (v.direction in ("bullish", "bearish") if settings.uses_options
                       else v.direction != "bearish")]
     if not tradeable and not account.held:
         run.stopped_reason = ("no trade possible: the Technical Analyst rated nothing a 'candidate' and "
                               "nothing is held, so the Portfolio Manager was skipped (no PM cost)")
         return run
 
-    if settings.instrument == "options":
+    if settings.uses_options:
         return _options_pm(run, settings, runner, account, allow, tech_all, tradeable, now,
                            fetch_option_chains)
 
@@ -259,7 +270,11 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
 def _options_pm(run: TeamRun, settings: Settings, runner: ClaudeRunner, account: AccountState,
                 allow: list[str], tech_all: dict, tradeable: list[str], now: datetime,
                 fetch_option_chains) -> TeamRun:
-    """Options mode: code builds the contract menu, the PM picks at most one long call or put."""
+    """Options/hybrid mode: code builds the menu, the PM picks at most one position.
+
+    Hybrid: a bullish pick with no suitable call is offered as fractional shares instead;
+    a bearish pick still needs a put."""
+    hybrid = settings.instrument == "hybrid"
     tech_rep = run.analysts["technical_analyst"].report
     news_rep = run.analysts["catalyst_analyst"].report
     earnings = {v.ticker.upper(): v.next_earnings for v in news_rep.views}
@@ -270,14 +285,23 @@ def _options_pm(run: TeamRun, settings: Settings, runner: ClaudeRunner, account:
              for t in (x.upper() for x in tradeable) if t in snaps]
     run.options_menu = options.options_menu(picks, account.cash, settings.options, now.date(),
                                             fetch=fetch_option_chains)
-    offered = {t: m for t, m in run.options_menu.items() if m["contract"]}
+    for m in run.options_menu.values():
+        if m["contract"]:
+            m["instrument"] = "option"
+        elif hybrid and m["direction"] == "bullish":
+            m["instrument"] = "shares"
+            m["note"] = f"no suitable call ({m['note']}); offered as fractional shares instead"
+        else:
+            m["instrument"] = None
+    offered = {t: m for t, m in run.options_menu.items() if m["instrument"]}
     if not offered and not account.held:
         notes = "; ".join(f"{t}: {m['note']}" for t, m in run.options_menu.items())
-        run.stopped_reason = f"no suitable option contract, PM skipped (no PM cost). {notes}"
+        run.stopped_reason = f"nothing tradeable on the menu, PM skipped (no PM cost). {notes}"
         return run
 
     risk, opts = settings.risk, settings.options
-    prompt = load_prompt("portfolio_manager", settings.prompt_versions["portfolio_manager_options"])
+    prompt = load_prompt("portfolio_manager", settings.prompt_versions[
+        "portfolio_manager_hybrid" if hybrid else "portfolio_manager_options"])
     rendered = prompt.render(
         time_et=run.time_et, equity=f"${account.equity:,.2f}", cash=f"${account.cash:,.2f}",
         pnl_today=f"${account.pnl_today:,.2f}", positions=account.positions or "none",
@@ -291,11 +315,22 @@ def _options_pm(run: TeamRun, settings: Settings, runner: ClaudeRunner, account:
         regime_report=run.analysts["regime_analyst"].report.model_dump(),
         technical_report=tech_rep.model_dump(), catalyst_report=news_rep.model_dump(),
         options_menu=run.options_menu,
+        max_stop_distance_pct=f"{risk.max_stop_distance_pct * 100:g}",
     )
-    run.pm = runner.run(prompt, rendered, OptionsDecision, settings.models["portfolio_manager"],
+    run.pm = runner.run(prompt, rendered, HybridDecision if hybrid else OptionsDecision,
+                        settings.models["portfolio_manager"],
                         effort=settings.effort.get("portfolio_manager"), max_tokens=PM_MAX_TOKENS)
     if not run.pm.ok:
         run.stopped_reason = f"PM decision unusable, no trades: {run.pm.error}"
+        return run
+    if hybrid:
+        run.gate = gatekeeper.check_hybrid(
+            run.pm.report, cash=account.cash, pnl_today=account.pnl_today, equity=account.equity,
+            positions=account.shares_by_ticker, menu=run.options_menu, technical=tech_rep,
+            catalysts=news_rep, regime=run.analysts["regime_analyst"].report, risk=risk, opts=opts,
+            allowlist=set(allow),
+            last_prices={t: s["live_price"] or s["close"] for t, s in snaps.items() if s["close"] is not None},
+            stale={t for t, s in snaps.items() if s.get("stale")})
         return run
     run.gate = gatekeeper.check_options(
         run.pm.report, cash=account.cash, pnl_today=account.pnl_today, equity=account.equity,

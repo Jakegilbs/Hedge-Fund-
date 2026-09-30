@@ -1,7 +1,10 @@
 # Hedge Fund
 
 An AI analyst team that swing-trades (2–15 day holds) a small Robinhood Agentic
-account using **long calls and long puts only**. Three analysts research
+account. In the default **hybrid** mode a bullish pick is a long call when a
+liquid, affordable contract exists and fractional shares otherwise; a bearish
+pick is a long put or nothing. `instrument = "options"` trades long calls and
+puts only. Three analysts research
 bullish and bearish setups, code picks one liquid, affordable contract per
 candidate, a portfolio manager chooses at most one, and code (not AI) sizes it
 with all available cash and enforces every limit: one position at a time,

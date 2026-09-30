@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **76 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **80 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -159,9 +159,11 @@ call and costs nothing.
 
 ## Step 8: Trading live, with you approving (Level 1)
 
-The desk trades **only long calls and long puts** (set in `config/desk.toml`,
-`[strategy] instrument = "options"`). Your Robinhood Agentic account needs
-**options trading enabled** (Robinhood asks a few questions to approve it).
+The desk runs in **hybrid** mode (`config/desk.toml`, `[strategy] instrument = "hybrid"`):
+a bullish pick is a **long call** when a liquid, affordable one exists, otherwise
+**fractional shares** of the stock; a bearish pick is a **long put** or no trade.
+Your Robinhood Agentic account needs **options trading enabled** (Robinhood asks
+a few questions to approve it).
 
 Until the Robinhood connection is built, you are the executor. Each trading
 day:
@@ -181,9 +183,14 @@ day:
    - Time: sell by the "sell by" date no matter what.
    Robinhood allows only one open sell order per contract, so choose the stop
    or the take-profit order and watch the other level yourself.
-5. For a SELL instruction, close the whole option position and cancel its
-   open orders.
-6. Tell the team what you hold: copy the example file and edit it after every
+5. For a **shares** order (`BUY TICKER: 0.1234 shares, LIMIT $…`): open the stock,
+   **Buy**, switch the amount to **shares**, enter the exact number and a limit
+   price equal to the one shown. If the app only allows a market order for
+   fractional shares, place it only while the price is within about 0.5% of the
+   limit shown. Then place a **stop loss sell** at the stop price shown (or check
+   it each afternoon if the app will not accept one for fractional shares).
+6. For a SELL instruction, close the whole position and cancel its open orders.
+7. Tell the team what you hold: copy the example file and edit it after every
    trade:
 
    ```bash

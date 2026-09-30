@@ -54,20 +54,29 @@ def test_skips_wide_spreads_and_thin_open_interest():
 
 # ---------- full team run in options mode ----------
 
-def reports(direction="bullish", posture="cautious", conviction=4, event_risk="low", contract=None):
+def reports(direction="bullish", posture="cautious", conviction=4, event_risk="low", contract=None,
+            mode="options", instrument="option", spot=20.0):
     tech = TechnicalReport(views=[TechnicalView(
         ticker="CHEAP", data_ok=True, trend="up" if direction == "bullish" else "down", direction=direction,
         setup="breakout" if direction == "bullish" else "breakdown", setup_quality=4,
-        entry=20.0, stop=19.0 if direction == "bullish" else 21.0, target=23.0 if direction == "bullish" else 17.0,
+        entry=spot, stop=round(spot * (0.95 if direction == "bullish" else 1.05), 2),
+        target=round(spot * (1.15 if direction == "bullish" else 0.85), 2),
         key_levels=[], evidence="e", risks="r", recommendation="candidate")], warnings=[])
     news = CatalystReport(views=[CatalystView(ticker="CHEAP", data_ok=True, next_earnings=None,
                                               days_to_earnings=None, event_risk=event_risk, sentiment="neutral",
                                               catalysts=[], red_flags=[], summary="")], warnings=[])
     regime = RegimeReport(regime="neutral", posture=posture, max_new_positions_today=1, evidence=[],
                           leading_sectors=[], lagging_sectors=[], summary="", warnings=[])
-    pm = OptionsDecision(market_view="", orders=[OptionOrder(
-        ticker="CHEAP", direction=direction, contract_symbol=contract or "PLACEHOLDER", thesis="t",
-        bear_case="b", conviction=conviction)], position_updates=[], warnings=[], honest_assessment="")
+    if mode == "hybrid":
+        from desk.schemas import HybridDecision, HybridOrder
+        pm = HybridDecision(market_view="", orders=[HybridOrder(
+            ticker="CHEAP", direction=direction, instrument=instrument,
+            contract_symbol=None if instrument == "shares" else (contract or "PLACEHOLDER"), thesis="t",
+            bear_case="b", conviction=conviction)], position_updates=[], warnings=[], honest_assessment="")
+    else:
+        pm = OptionsDecision(market_view="", orders=[OptionOrder(
+            ticker="CHEAP", direction=direction, contract_symbol=contract or "PLACEHOLDER", thesis="t",
+            bear_case="b", conviction=conviction)], position_updates=[], warnings=[], honest_assessment="")
     return {m.__class__.__name__: m for m in (tech, news, regime, pm)}
 
 
@@ -84,21 +93,24 @@ class FakeClaude:
                                content=[SimpleNamespace(type="text", text=self.by_title[title].model_dump_json())])
 
 
-def run_options(bars, **kw):
+def run_options(bars, mode="options", fetch_empty=False, **kw):
+    from dataclasses import replace
     from desk.llm import ClaudeRunner
-    settings = load_settings()
-    assert settings.instrument == "options"
+    settings = replace(load_settings(), instrument=mode)
     spot = float(bars["CHEAP"]["Close"].iloc[-1])
 
-    def fake_chains(ticker, cfg, today):
-        c = chain(spot=spot)
+    def fake_chains(ticker, cfg, today, max_expiries=None):
+        c = {} if fetch_empty else chain(spot=spot)
         return {"calls": c, "puts": c}
 
     # Find the contract code will offer, then have the PM pick it.
     offered, note = select_contract(chain(spot=spot), kw.get("direction", "bullish"), spot, 100,
                                     settings.options, TODAY)
     assert offered, note
-    claude = FakeClaude(reports(contract=kw.pop("contract", offered["contract_symbol"]), **kw))
+    if fetch_empty:
+        offered = {"contract_symbol": None}
+    claude = FakeClaude(reports(contract=kw.pop("contract", offered["contract_symbol"]), mode=mode,
+                                spot=round(spot, 2), **kw))
     news = lambda tickers, etfs=frozenset(): {"today": "2026-09-30", "tickers": {}}
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -166,7 +178,7 @@ def test_scanner_skips_tickers_whose_options_are_unaffordable():
             "avg_dollar_volume_20d": 1e9, "change_pct": {"20d": 2, "60d": 5}, "rsi14": 55.0,
             "trend_facts": {"trend": "up"}, "pct_from_52w_high": -2.0}
     snaps = {"PRICEY": {**base, "close": 190.0, "atr_pct": 3.6}, "CHEAP": {**base, "close": 12.0, "atr_pct": 3.0}}
-    ok = lambda s: estimated_atm_cost(s["close"], s["atr_pct"]) <= 100
+    ok = lambda s, d="bullish": estimated_atm_cost(s["close"], s["atr_pct"]) <= 100
     scan = pick_candidates(snaps, held=[], affordable=ok)
     assert scan.candidates == ["CHEAP"] and scan.filtered_unaffordable == ["PRICEY"]
 
@@ -252,3 +264,32 @@ def test_scanner_skips_names_without_liquid_options_in_rank_order():
     assert checked == ["S5", "S4", "S3", "S2"] and scan.no_liquid_options == ["S5", "S3"]
     capped = pick_candidates(snaps, held=[], max_candidates=2, tradeable=lambda t, d: False, max_checks=3)
     assert capped.candidates == [] and len(capped.no_liquid_options) == 3
+
+
+
+# ---------- hybrid mode ----------
+
+def test_hybrid_uses_the_call_when_one_is_on_the_menu():
+    run, claude = run_options(cheap_bars(), mode="hybrid")
+    assert claude.calls[-1] == "HybridDecision"
+    [o] = run.gate.approved
+    assert o.option_type == "call" and o.contracts >= 1
+
+
+def test_hybrid_falls_back_to_all_in_shares_without_a_call():
+    run, _ = run_options(cheap_bars(), mode="hybrid", fetch_empty=True, instrument="shares")
+    assert run.options_menu["CHEAP"]["instrument"] == "shares"
+    [o] = run.gate.approved
+    assert o.action == "buy" and not hasattr(o, "contract_symbol")
+    assert 98.0 <= o.notional_usd <= 100.0 and o.stop_price < o.limit_price
+
+
+def test_hybrid_bearish_without_a_put_is_not_tradeable():
+    run, claude = run_options(cheap_bars(), mode="hybrid", fetch_empty=True, direction="bearish")
+    assert run.options_menu["CHEAP"]["instrument"] is None
+    assert run.pm is None and "nothing tradeable" in run.stopped_reason
+
+
+def test_hybrid_rejects_shares_when_a_call_exists():
+    run, _ = run_options(cheap_bars(), mode="hybrid", instrument="shares")
+    assert not run.gate.approved and "only allowed" in " ".join(run.gate.rejected[0].reasons)

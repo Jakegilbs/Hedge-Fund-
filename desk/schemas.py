@@ -119,3 +119,24 @@ class OptionsDecision(BaseModel):
     position_updates: list[PositionUpdate]
     warnings: list[str]
     honest_assessment: str
+
+
+# ---------- Portfolio Manager, hybrid mode (option if a contract exists, else shares) ----------
+
+class HybridOrder(BaseModel):
+    ticker: str
+    direction: Literal["bullish", "bearish"]
+    instrument: Literal["option", "shares"] = Field(
+        description='"option" when the menu lists a contract for this ticker; "shares" only where the menu says shares')
+    contract_symbol: Optional[str] = Field(description="The menu's contract_symbol for an option; null for shares")
+    thesis: str
+    bear_case: str = Field(description="Strongest argument against this trade")
+    conviction: Literal[1, 2, 3, 4, 5]
+
+
+class HybridDecision(BaseModel):
+    market_view: str
+    orders: list[HybridOrder] = Field(description="At most one new position")
+    position_updates: list[PositionUpdate]
+    warnings: list[str]
+    honest_assessment: str

@@ -39,12 +39,14 @@ def _print_run(run: TeamRun) -> None:
         print(f"\n--- Portfolio Manager  [{a.model_served or a.model_requested}, prompt {a.prompt_version}, ${a.cost_usd:.4f}]")
         print(json.dumps(a.report.model_dump(), indent=2) if a.report else f"FAILED: {a.error}")
     if run.options_menu is not None:
-        print("\n--- Options menu (code picked one contract per candidate)")
+        print("\n--- Menu (code picked one contract, or shares, per candidate)")
         for t, m in run.options_menu.items():
             c = m["contract"]
             if c:
                 print(f"  {t} {m['direction']}: {c['type'].upper()} ${c['strike']:g} exp {c['expiry']} "
                       f"({c['days_to_expiry']}d), delta {c['delta']}, ${c['cost_per_contract']:.0f}/contract")
+            elif m.get("instrument") == "shares":
+                print(f"  {t} {m['direction']}: FRACTIONAL SHARES (no suitable call)")
             else:
                 print(f"  {t} {m['direction']}: none ({m['note']})")
     if run.gate:
@@ -158,10 +160,10 @@ def main() -> None:
         tech = market_data.technical_packet(done, universe, ref, live)
         scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
                                settings.scan_min_price, settings.scan_min_dollar_volume,
-                               directions=("bullish", "bearish") if settings.instrument == "options"
+                               directions=("bullish", "bearish") if settings.uses_options
                                else ("bullish",),
                                affordable=options_affordable(settings, account.cash),
-                               upside_weight=UPSIDE_WEIGHT if settings.instrument == "options" else 0.0)
+                               upside_weight=UPSIDE_WEIGHT if settings.uses_options else 0.0)
         print(json.dumps(market_data.regime_packet(
             bars, list(settings.regime_symbols), list(settings.sector_etfs), universe), indent=1, default=str))
         _print_scan(scan, len(universe), sum(1 for t in universe if t in bars))

@@ -100,7 +100,7 @@ def pick_candidates(tech_snapshots: dict[str, dict], held: list[str], max_candid
                 result.filtered_illiquid.append(t)
             continue
         problem = _problem(s, direction)
-        if affordable is not None and not affordable(s):
+        if affordable is not None and not affordable(s, direction):
             result.filtered_unaffordable.append(t)
         elif problem == "extended":
             result.filtered_extended.append(t)

@@ -130,7 +130,7 @@ def load_universe(settings: Settings, log=print) -> list[str]:
     symbols = set(settings.allowlist)
     if settings.include_sp500:
         symbols |= set(sp500_symbols())
-    if settings.instrument == "options":
+    if settings.uses_options:
         symbols |= set(settings.options_extra)
         if settings.include_nasdaq_cheap:
             symbols |= set(cheap_nasdaq(settings, log=log))

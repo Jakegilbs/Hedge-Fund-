@@ -46,7 +46,7 @@ class Settings:
     max_candidates: int = 8
     min_price: float = 10.0
     min_dollar_volume: float = 50_000_000
-    instrument: str = "stock"            # "stock" or "options" (long calls and puts only)
+    instrument: str = "stock"            # "stock", "options" (long calls/puts only) or "hybrid"
     options_extra: tuple[str, ...] = ()
     options_min_price: float = 5.0
     options_min_dollar_volume: float = 20_000_000
@@ -58,12 +58,17 @@ class Settings:
     options: "OptionsConfig" = None      # set by load_settings
 
     @property
+    def uses_options(self) -> bool:
+        """Options or hybrid mode: calls and puts, both directions, the cheap options universe."""
+        return self.instrument in ("options", "hybrid")
+
+    @property
     def scan_min_price(self) -> float:
-        return self.options_min_price if self.instrument == "options" else self.min_price
+        return self.options_min_price if self.uses_options else self.min_price
 
     @property
     def scan_min_dollar_volume(self) -> float:
-        return self.options_min_dollar_volume if self.instrument == "options" else self.min_dollar_volume
+        return self.options_min_dollar_volume if self.uses_options else self.min_dollar_volume
 
     @property
     def etfs(self) -> set[str]:
@@ -77,10 +82,12 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
     missing = [r for r in ROLES if r not in raw["models"] or r not in raw["prompts"]]
     if missing:
         raise ValueError(f"config is missing model or prompt version for: {missing}")
-    if raw.get("strategy", {}).get("instrument") == "options" and "portfolio_manager_options" not in raw["prompts"]:
-        raise ValueError("options mode needs prompts.portfolio_manager_options")
-    if raw.get("strategy", {}).get("instrument", "stock") not in ("stock", "options"):
-        raise ValueError('strategy.instrument must be "stock" or "options"')
+    mode = raw.get("strategy", {}).get("instrument", "stock")
+    if mode not in ("stock", "options", "hybrid"):
+        raise ValueError('strategy.instrument must be "stock", "options" or "hybrid"')
+    needed = {"options": "portfolio_manager_options", "hybrid": "portfolio_manager_hybrid"}.get(mode)
+    if needed and needed not in raw["prompts"]:
+        raise ValueError(f"{mode} mode needs prompts.{needed}")
     return Settings(
         paper_equity=float(raw["account"]["paper_equity"]),
         allowlist=tuple(s.upper() for s in raw["universe"]["allowlist"]),

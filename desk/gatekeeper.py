@@ -236,3 +236,65 @@ def check_options(decision, *, cash: float, pnl_today: float, equity: float, ope
             exit_by=exit_by.isoformat(), stock_entry=view.entry, stock_stop=view.stop, stock_target=view.target,
             reason=f"PM conviction {o.conviction}/5"))
     return result
+
+
+
+# ---------- hybrid mode: an option when one is on the menu, otherwise fractional shares ----------
+
+def check_hybrid(decision, *, cash: float, pnl_today: float, equity: float, positions: dict[str, float],
+                 menu: dict[str, dict], technical, catalysts: CatalystReport, regime: RegimeReport,
+                 risk: RiskLimits, opts, allowlist: set[str], last_prices: dict[str, float],
+                 stale: set[str]) -> GateResult:
+    """Approve at most one new position: a long call/put from the menu, or fractional shares
+    for a bullish pick the menu marks as shares. Each order goes through the same checks as
+    in options or stock mode."""
+    from .schemas import OptionOrder, OptionsDecision, Order, PMDecision
+
+    result = GateResult()
+    for u in decision.position_updates:
+        if u.decision == "exit":
+            result.approved.append(ApprovedOrder("sell", u.ticker.upper(), 0.0, 0.0, reason=f"PM exit: {u.reason}"))
+    views = {v.ticker.upper(): v for v in technical.views}
+    held = dict(positions)
+
+    for o in sorted(decision.orders, key=lambda o: -o.conviction):
+        t = o.ticker.upper()
+        entry = menu.get(t) or {}
+        if o.instrument == "option":
+            sub = check_options(
+                OptionsDecision(market_view="", position_updates=[], warnings=[], honest_assessment="",
+                                orders=[OptionOrder(ticker=t, direction=o.direction,
+                                                    contract_symbol=o.contract_symbol or "", thesis=o.thesis,
+                                                    bear_case=o.bear_case, conviction=o.conviction)]),
+                cash=cash, pnl_today=pnl_today, equity=equity, open_positions=sum(1 for v in held.values() if v),
+                menu=menu, technical=technical, catalysts=catalysts, regime=regime, risk=risk, opts=opts,
+                allowlist=allowlist)
+        else:
+            view = views.get(t)
+            reasons = []
+            if entry.get("instrument") != "shares":
+                reasons.append("shares are only allowed for a bullish pick with no option on the menu")
+            if o.direction != "bullish":
+                reasons.append("bearish trades need a put; shares cannot be sold short here")
+            if view is None or view.recommendation != "candidate" or view.direction != "bullish":
+                reasons.append("the Technical Analyst does not rate this a bullish candidate")
+            if reasons:
+                result.rejected.append(Rejection(t, "buy shares", reasons))
+                continue
+            price = last_prices.get(t) or view.entry
+            sub = check(
+                PMDecision(market_view="", position_updates=[], warnings=[], honest_assessment="",
+                           orders=[Order(action="buy", ticker=t, shares=0, order_type="limit",
+                                         limit_price=round(price, 2), stop_price=view.stop,
+                                         target_price=view.target, reward_risk=view.reward_risk_checked or 0,
+                                         thesis=o.thesis, bear_case=o.bear_case, conviction=o.conviction)]),
+                equity=equity, cash=cash, pnl_today=pnl_today, positions=held, last_prices=last_prices,
+                stale=stale, allowlist=allowlist, risk=risk, regime=regime, catalysts=catalysts)
+        result.rejected += sub.rejected
+        result.halted = result.halted or sub.halted
+        for a in sub.approved:
+            if getattr(a, "action", "buy") == "sell":
+                continue
+            result.approved.append(a)
+            held[t] = 1.0          # counts toward the one-position limit for later orders
+    return result

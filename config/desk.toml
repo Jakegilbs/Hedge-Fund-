@@ -6,9 +6,11 @@
 paper_equity = 100.0
 
 [strategy]
+# "hybrid": bullish -> a call if a liquid, affordable one exists, else fractional shares;
+#           bearish -> a put (no put, no trade). One all-in position at a time.
 # "options": long calls and long puts only (bullish view -> call, bearish -> put).
 # "stock": long stock only.
-instrument = "options"
+instrument = "hybrid"
 
 [options]
 # How code picks the one contract offered for each candidate.
@@ -97,3 +99,4 @@ catalyst_analyst = "v1"
 regime_analyst = "v1"
 portfolio_manager = "v3"   # v3: all-in, conviction 3 acceptable (stock mode)
 portfolio_manager_options = "options_v1"   # options mode
+portfolio_manager_hybrid = "hybrid_v1"     # hybrid mode
