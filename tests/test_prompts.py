@@ -30,6 +30,7 @@ def test_fingerprint_changes_with_wording():
 
 def test_config_has_sane_limits():
     s = load_settings()
-    assert 0 < s.risk.risk_per_trade <= 0.02
+    assert 0 < s.risk.max_stop_distance_pct <= 0.2   # no position without a close stop
     assert s.risk.min_reward_risk >= 1.5
+    assert s.risk.max_drawdown_pct < 0
     assert "SPY" in s.allowlist

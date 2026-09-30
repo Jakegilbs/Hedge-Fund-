@@ -109,6 +109,12 @@ def check(decision: PMDecision, *, equity: float, cash: float, pnl_today: float,
         if price and abs(entry / price - 1) > MAX_LIMIT_DISTANCE:
             reasons.append(f"limit ${entry} is more than {MAX_LIMIT_DISTANCE:.0%} from last price ${price:.2f}")
 
+        if entry > stop and (entry - stop) / entry > risk.max_stop_distance_pct:
+            reasons.append(f"stop {(entry - stop) / entry:.1%} below entry; the limit is "
+                           f"{risk.max_stop_distance_pct:.0%}")
+        if o.conviction < risk.min_conviction:
+            reasons.append(f"conviction {o.conviction}/5 below the minimum {risk.min_conviction}")
+
         rr = (target - entry) / (entry - stop) if entry > stop else 0.0
         if rr < risk.min_reward_risk:
             reasons.append(f"reward-to-risk {rr:.2f} below {risk.min_reward_risk}")
@@ -119,9 +125,10 @@ def check(decision: PMDecision, *, equity: float, cash: float, pnl_today: float,
         shares = 0.0
         if not reasons:
             per_share_risk = entry - stop
+            # A small cash buffer keeps an all-in limit order from exceeding buying power.
             shares = floor_shares(min(risk.risk_per_trade * equity / per_share_risk,
                                       risk.max_position_pct * equity / entry,
-                                      cash_left / entry))
+                                      cash_left * 0.995 / entry))
             if shares * entry < MIN_ORDER_USD:
                 reasons.append(f"size ${shares * entry:.2f} below the ${MIN_ORDER_USD:.2f} minimum")
 

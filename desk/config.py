@@ -22,6 +22,12 @@ class RiskLimits:
     daily_halt_pct: float
     weekly_halt_pct: float
     max_drawdown_pct: float
+    max_stop_distance_pct: float = 1.0   # 1.0 = no cap
+    min_conviction: int = 1
+
+    @property
+    def all_in(self) -> bool:
+        return self.max_open_positions == 1 and self.max_position_pct >= 1.0
 
 
 @dataclass(frozen=True)

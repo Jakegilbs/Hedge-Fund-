@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **44 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **49 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -185,8 +185,10 @@ morning after 10:00 ET:
    its entry, stop and target. The team then reviews your positions every run.
    This file stays in `HedgeFund/data/` and is never uploaded.
 
-Skipping a trade is always allowed. The Gatekeeper already sized every order so
-a stopped-out trade loses about 1% of the account ($1 on $100).
+Skipping a trade is always allowed. The desk holds one position at a time with
+all available cash in it. The Gatekeeper only approves stops within 10% of
+entry, so a stopped-out trade loses up to about 10% of the account ($10 on
+$100); a gap down overnight can lose more.
 
 ---
 

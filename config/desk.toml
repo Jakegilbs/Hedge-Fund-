@@ -30,14 +30,19 @@ regime_symbols = ["SPY", "QQQ", "IWM", "^VIX", "^TNX", "TLT"]
 sector_etfs = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC"]
 
 [risk]
-# Enforced by the Gatekeeper (next build step). Shown to the Portfolio Manager.
-risk_per_trade = 0.01        # 1% of equity from entry to stop
-max_position_pct = 0.15      # 15% of equity per position
-max_open_positions = 6
+# Enforced by the Gatekeeper (code). Shown to the Portfolio Manager.
+# Current style: ONE high-conviction position at a time, sized with all available cash.
+# For a diversified style instead: risk_per_trade = 0.01, max_position_pct = 0.15,
+# max_open_positions = 6, max_stop_distance_pct = 1.0, min_conviction = 1.
+risk_per_trade = 1.0          # 1.0 = size is not limited by risk; the stop cap below limits the loss
+max_position_pct = 1.0        # 100% of equity in one position
+max_open_positions = 1
+max_stop_distance_pct = 0.10  # stop at most 10% below entry: a stop-out loses at most ~10%
+min_conviction = 4            # the PM's conviction (1-5) must be at least this to trade
 min_reward_risk = 2.0
-daily_halt_pct = -0.03       # no new entries after -3% on the day
-weekly_halt_pct = -0.06
-max_drawdown_pct = -0.15
+daily_halt_pct = -0.03        # no new entries after -3% on the day
+weekly_halt_pct = -0.10
+max_drawdown_pct = -0.30      # everything stops 30% below the account's peak
 
 [models]
 # One model per role. Analysts run on the cheapest model; the PM decides on Opus.
@@ -52,7 +57,7 @@ portfolio_manager = "high"
 
 [prompts]
 # Prompt version per role: prompts/<role>/<version>.md
-technical_analyst = "v2"   # v2: trend comparisons from code, intraday handling
+technical_analyst = "v3"   # v3: bolder ATR/measured-move targets, levels for every name
 catalyst_analyst = "v1"
 regime_analyst = "v1"
-portfolio_manager = "v1"
+portfolio_manager = "v2"   # v2: one all-in, high-conviction position

@@ -1,8 +1,11 @@
-from desk.config import load_settings
+from desk.config import RiskLimits, load_settings
 from desk.gatekeeper import check
 from desk.schemas import CatalystReport, CatalystView, Order, PMDecision, PositionUpdate, RegimeReport
 
-RISK = load_settings().risk
+# Diversified style (1% risk, 15% cap, 6 positions); the all-in style is tested below.
+RISK = RiskLimits(risk_per_trade=0.01, max_position_pct=0.15, max_open_positions=6, min_reward_risk=2.0,
+                  daily_halt_pct=-0.03, weekly_halt_pct=-0.06, max_drawdown_pct=-0.15)
+ALL_IN = load_settings().risk
 ALLOW = {"NVDA", "JPM", "AAPL", "SPY"}
 
 
@@ -28,10 +31,11 @@ def decide(*orders, updates=()):
                       honest_assessment="")
 
 
-def run(decision, equity=100.0, cash=100.0, pnl=0.0, positions=None, prices=None, stale=(), reg=None, cat=None):
+def run(decision, equity=100.0, cash=100.0, pnl=0.0, positions=None, prices=None, stale=(), reg=None, cat=None,
+        risk=RISK):
     return check(decision, equity=equity, cash=cash, pnl_today=pnl, positions=positions or {},
                  last_prices=prices or {"NVDA": 100.0, "JPM": 50.0, "AAPL": 200.0}, stale=set(stale),
-                 allowlist=ALLOW, risk=RISK, regime=reg or regime(), catalysts=cat or news("NVDA", "JPM", "AAPL"))
+                 allowlist=ALLOW, risk=risk, regime=reg or regime(), catalysts=cat or news("NVDA", "JPM", "AAPL"))
 
 
 def test_shares_recomputed_and_capped_by_position_limit():
@@ -106,3 +110,32 @@ def test_sell_of_unheld_ticker_rejected():
     o.action = "sell"
     g = run(decide(o))
     assert "not held" in g.rejected[0].reasons[0]
+
+
+# ---------- all-in, high-conviction style (the current config) ----------
+
+def test_config_is_all_in():
+    assert ALL_IN.all_in and ALL_IN.max_open_positions == 1 and ALL_IN.min_conviction >= 4
+
+
+def test_all_in_uses_all_cash_on_the_single_best_trade():
+    g = run(decide(buy("JPM", 50, 48, 55, conviction=4), buy("NVDA", conviction=5)), risk=ALL_IN)
+    [o] = g.approved
+    assert o.ticker == "NVDA" and 99.0 <= o.notional_usd <= 100.0
+    assert o.risk_usd <= 5.0            # 5% stop on a ~$99.50 position
+    assert "position count" in g.rejected[0].reasons[0]
+
+
+def test_all_in_rejects_low_conviction():
+    g = run(decide(buy(conviction=3)), risk=ALL_IN)
+    assert not g.approved and "conviction 3/5" in " ".join(g.rejected[0].reasons)
+
+
+def test_all_in_rejects_wide_stop():
+    g = run(decide(buy(entry=100, stop=85, target=140, conviction=5)), risk=ALL_IN)
+    assert not g.approved and "15.0% below entry" in " ".join(g.rejected[0].reasons)
+
+
+def test_all_in_blocked_while_a_position_is_open():
+    g = run(decide(buy("JPM", 50, 48, 55, conviction=5)), positions={"AAPL": 0.5}, risk=ALL_IN)
+    assert not g.approved and "position count" in g.rejected[0].reasons[0]
