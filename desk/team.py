@@ -89,6 +89,18 @@ def options_affordable(settings: Settings, cash: float):
     return ok
 
 
+def options_tradeable(settings: Settings, cash: float, snapshots: dict, now: datetime, fetch):
+    """Options mode: only send stocks that have a liquid, affordable contract right now."""
+    if settings.instrument != "options":
+        return None
+
+    def ok(ticker: str, direction: str) -> bool:
+        snap = snapshots[ticker]
+        return options.has_tradeable_contract(ticker, direction, snap.get("live_price") or snap["close"],
+                                              cash, settings.options, now.date(), fetch=fetch)
+    return ok
+
+
 def _check_reports(run: "TeamRun", candidates: list[str], min_rr: float) -> None:
     """Code checks on the analysts' reports before the PM sees them.
 
@@ -145,7 +157,9 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
                                settings.scan_min_price, settings.scan_min_dollar_volume, directions=directions,
                                affordable=options_affordable(settings, account.cash),
-                               upside_weight=UPSIDE_WEIGHT if settings.instrument == "options" else 0.0)
+                               upside_weight=UPSIDE_WEIGHT if settings.instrument == "options" else 0.0,
+                               tradeable=options_tradeable(settings, account.cash, tech_all["tickers"], now,
+                                                           fetch_option_chains))
         candidates = scan.candidates
 
     run = TeamRun(time_et=time_et, candidates=candidates, scan=scan)

@@ -143,19 +143,29 @@ def estimated_atm_cost(close: float, atr_pct: float | None, days: int = 35) -> f
     return 0.4 * close * sigma * math.sqrt(days / 365) * 100
 
 
-def fetch_chains(ticker: str, cfg: OptionsConfig, today: date) -> dict[str, pd.DataFrame]:
-    """Calls and puts per expiry inside the window, from yfinance: {"calls": {...}, "puts": {...}}."""
+def fetch_chains(ticker: str, cfg: OptionsConfig, today: date,
+                 max_expiries: int | None = None) -> dict[str, pd.DataFrame]:
+    """Calls and puts per expiry inside the window, from yfinance: {"calls": {...}, "puts": {...}}.
+
+    max_expiries: only load the expiries closest to ~35 days (a quick liquidity check).
+    """
     import yfinance as yf
 
     t = yf.Ticker(ticker)
     out: dict[str, dict[str, pd.DataFrame]] = {"calls": {}, "puts": {}}
-    for expiry in t.options or ():
+    listed = list(t.options or ())
+    in_window = [e for e in listed
+                 if cfg.min_days_to_expiry <= (date.fromisoformat(e) - today).days <= cfg.max_days_to_expiry]
+    if max_expiries is not None:
+        in_window = sorted(in_window, key=lambda e: abs((date.fromisoformat(e) - today).days - 35))[:max_expiries]
+    for expiry in listed:
         dte = (date.fromisoformat(expiry) - today).days
-        if cfg.min_days_to_expiry <= dte <= cfg.max_days_to_expiry:
+        if expiry in in_window:
             chain = t.option_chain(expiry)
             out["calls"][expiry] = chain.calls
             out["puts"][expiry] = chain.puts
-        elif 0 < dte <= 120:   # listed only, so a "no expiry" note can say what exists
+        elif 0 < dte <= 120 and not (cfg.min_days_to_expiry <= dte <= cfg.max_days_to_expiry):
+            # listed only, so a "no expiry" note can say what exists
             out["calls"].setdefault(expiry, pd.DataFrame())
             out["puts"].setdefault(expiry, pd.DataFrame())
     return out
@@ -174,3 +184,16 @@ def options_menu(picks: list[dict], cash: float, cfg: OptionsConfig, today: date
             contract, note = None, f"option chain unavailable: {e}"
         menu[p["ticker"]] = {"direction": p["direction"], "contract": contract, "note": note}
     return menu
+
+
+def has_tradeable_contract(ticker: str, direction: str, spot: float, cash: float, cfg: OptionsConfig,
+                           today: date, fetch=fetch_chains) -> bool:
+    """Quick pre-check before any AI is paid: does this stock have at least one liquid,
+    affordable contract in the right direction (nearest two expiries to ~35 days)?"""
+    try:
+        chains = fetch(ticker, cfg, today, max_expiries=2)
+        side = chains["calls" if direction == "bullish" else "puts"]
+        contract, _ = select_contract(side, direction, spot, cash, cfg, today)
+        return contract is not None
+    except Exception:
+        return False

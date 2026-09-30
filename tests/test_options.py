@@ -226,3 +226,29 @@ def test_empty_quotes_and_missing_expiries_are_explained():
     assert c is None and "no put quotes" in note
     c, note = select_contract({"2026-10-02": pd.DataFrame()}, "bearish", 20.0, cash=100, cfg=CFG, today=TODAY)
     assert c is None and "expiries offered: 2026-10-02" in note
+
+
+def test_precheck_finds_liquid_contract_or_not():
+    from desk.options import has_tradeable_contract
+    good = lambda t, cfg, today, max_expiries=None: {"calls": chain(), "puts": chain()}
+    thin = lambda t, cfg, today, max_expiries=None: {"calls": {k: v.assign(openInterest=1) for k, v in chain().items()},
+                                                     "puts": {}}
+    assert has_tradeable_contract("X", "bullish", 20.0, 100, CFG, TODAY, fetch=good)
+    assert not has_tradeable_contract("X", "bullish", 20.0, 100, CFG, TODAY, fetch=thin)
+    boom = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("yahoo down"))
+    assert not has_tradeable_contract("X", "bullish", 20.0, 100, CFG, TODAY, fetch=boom)
+
+
+def test_scanner_skips_names_without_liquid_options_in_rank_order():
+    from desk.scanner import pick_candidates
+    base = {"setups": [{"setup": "pullback", "direction": "bullish"}], "stale": False, "close": 12.0,
+            "avg_dollar_volume_20d": 1e9, "rsi14": 55.0, "atr_pct": 3.0,
+            "trend_facts": {"trend": "up"}, "pct_from_52w_high": -2.0}
+    snaps = {f"S{i}": {**base, "change_pct": {"20d": i, "60d": i}} for i in range(6)}
+    checked = []
+    tradeable = lambda t, d: checked.append(t) or t not in ("S5", "S3")
+    scan = pick_candidates(snaps, held=[], max_candidates=2, tradeable=tradeable)
+    assert scan.candidates == ["S2", "S4"]
+    assert checked == ["S5", "S4", "S3", "S2"] and scan.no_liquid_options == ["S5", "S3"]
+    capped = pick_candidates(snaps, held=[], max_candidates=2, tradeable=lambda t, d: False, max_checks=3)
+    assert capped.candidates == [] and len(capped.no_liquid_options) == 3

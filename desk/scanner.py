@@ -31,6 +31,7 @@ class ScanResult:
     filtered_extended: list[str] = field(default_factory=list)
     filtered_pinned: list[str] = field(default_factory=list)
     filtered_unaffordable: list[str] = field(default_factory=list)
+    no_liquid_options: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     setup_counts: dict[str, int] = field(default_factory=dict)
     why: dict[str, str] = field(default_factory=dict)
@@ -59,12 +60,16 @@ def _problem(s: dict, direction: str) -> str | None:
 def pick_candidates(tech_snapshots: dict[str, dict], held: list[str], max_candidates: int = 8,
                     min_price: float = 0.0, min_dollar_volume: float = 0.0,
                     benchmark: str = "SPY", directions: tuple[str, ...] = ("bullish",),
-                    affordable=None, upside_weight: float = 0.0) -> ScanResult:
+                    affordable=None, upside_weight: float = 0.0, tradeable=None,
+                    max_checks: int = 30) -> ScanResult:
     """A stale ticker is never a new candidate; a stale held position is still
     reviewed so the PM can see and flag the data problem. `affordable(snapshot)`,
     when given (options mode), drops tickers whose options the account cannot buy.
     `upside_weight` (options mode) adds points per 1% of average daily range, so
-    stocks that move more rank higher: a bigger stock move is a bigger option move."""
+    stocks that move more rank higher: a bigger stock move is a bigger option move.
+    `tradeable(ticker, direction)`, when given (options mode), is checked in rank
+    order while filling slots, so only stocks with a usable option contract are sent;
+    at most `max_checks` stocks are checked (each check is a network call)."""
     result = ScanResult(candidates=[], scanned=len(tech_snapshots))
     bench = (tech_snapshots.get(benchmark) or {}).get("change_pct", {})
     pools: dict[str, dict[str, list[str]]] = {d: {"setup": [], "trend": []} for d in directions}
@@ -120,18 +125,38 @@ def pick_candidates(tech_snapshots: dict[str, dict], held: list[str], max_candid
         bull = math.ceil(max_candidates * BULL_SHARE)
         slots = {"bullish": bull, "bearish": max_candidates - bull}
 
+    checks = {"n": 0}
+    rejected: set[str] = set()
+
+    def take(order: list[str], n: int, direction: str, already: list[str]) -> list[str]:
+        out = []
+        for t in order:
+            if len(out) >= n:
+                break
+            if t in already or t in rejected:
+                continue
+            if tradeable is not None:
+                if checks["n"] >= max_checks:
+                    break
+                checks["n"] += 1
+                if not tradeable(t, direction):
+                    rejected.add(t)
+                    result.no_liquid_options.append(t)
+                    continue
+            out.append(t)
+        return out
+
     picked: dict[str, list[str]] = {}
     for d in directions:
-        order = ranked(d, "setup") + ranked(d, "trend")
-        picked[d] = order[:slots[d]]
-        result.cut_by_limit += [t for t in ranked(d, "setup") if t not in picked[d]]
+        picked[d] = take(ranked(d, "setup") + ranked(d, "trend"), slots[d], d, [])
     # Give unused slots on one side to the other side.
     for d in directions:
         spare = sum(slots[o] - len(picked[o]) for o in directions if o != d)
         if spare > 0:
-            extra = [t for t in ranked(d, "setup") + ranked(d, "trend") if t not in picked[d]][:spare]
-            picked[d] += extra
-            result.cut_by_limit = [t for t in result.cut_by_limit if t not in extra]
+            picked[d] += take(ranked(d, "setup") + ranked(d, "trend"), spare, d, picked[d])
+    chosen = {t for names in picked.values() for t in names}
+    result.cut_by_limit = [t for d in directions for t in ranked(d, "setup")
+                           if t not in chosen and t not in rejected]
 
     for d, names in picked.items():
         for t in names:

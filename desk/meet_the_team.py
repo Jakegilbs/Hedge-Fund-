@@ -62,6 +62,8 @@ def _print_scan(sc, universe_size: int | None = None, downloaded: int | None = N
     counts = ", ".join(f"{k} {v}" for k, v in sorted(sc.setup_counts.items())) or "none"
     print(f"Checked {sc.scanned} | stale {len(sc.stale)} | with a setup {len(sc.with_setups)} ({counts})"
           f" | too illiquid {len(sc.filtered_illiquid)}")
+    if sc.no_liquid_options:
+        print(f"Skipped, no liquid affordable option contract: {', '.join(sc.no_liquid_options)}")
     if sc.filtered_unaffordable:
         print(f"Skipped, options too expensive for the account: {len(sc.filtered_unaffordable)} tickers")
     if sc.filtered_extended or sc.filtered_pinned:
