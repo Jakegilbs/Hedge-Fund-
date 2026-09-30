@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **110 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **118 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -252,6 +252,30 @@ A rule that only works in the half you tuned it on is luck, not an edge.
 Every trade is saved to `data/backtests/` as a CSV (opens in Numbers or Excel).
 The analysts are not simulated, option prices are estimates, and today's
 stock list leaves out companies that went bust, so treat results as optimistic.
+
+## Step 10: Test momentum rotation (free, no AI)
+
+A different kind of strategy: hold the stocks that rose the most recently,
+rebalance once a month, and hold cash while SPY is below its 200-day average.
+
+```bash
+python -m desk.rotation                              # 60 versions side by side
+python -m desk.rotation --lookback 60 --top 10       # one version, year by year, and what it would hold today
+python -m desk.rotation --lookback 252 --skip 21 --top 5 --weighting invvol
+python -m desk.rotation --rebalance 2                # every two months
+```
+
+How to read it:
+
+- **Compare with "Equal weight, whole universe", not only with SPY.** The free
+  stock list is today's S&P 500, so it misses companies that fell out of the
+  index; that flatters every strategy tested on it. Equal weight has the same
+  flaw, so beating it is what shows a real momentum effect.
+- **edge? = YES** means the version beat equal weight in both halves of the
+  period. Look for a pattern (for example most top-5 and top-10 versions of
+  one lookback winning), not the single best row: out of 60 versions, a few
+  win by luck.
+- **max drop** is the worst fall from a peak. Plan for it to happen again.
 
 ---
 
