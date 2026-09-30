@@ -96,6 +96,7 @@ desk/rotation.py        monthly momentum rotation backtest vs SPY and an equal-w
 desk/membership.py      historical S&P 500 membership, so backtests only rank stocks that were members then
 desk/earnings.py        earnings history (Yahoo, cached) and the positive earnings-drift flag
 desk/earnings_study.py  earnings event study: surprise, reaction, and the next 5/20/60 days vs SPY
+desk/free_hand.py       free-hand fund: the AI researches and decides the whole portfolio; code keeps score vs SPY
 tests/                  offline tests with a fake Claude client
 ```
 

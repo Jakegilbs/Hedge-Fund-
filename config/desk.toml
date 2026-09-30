@@ -107,4 +107,6 @@ catalyst_analyst = "v1"
 regime_analyst = "v1"
 portfolio_manager = "v3"   # v3: all-in, conviction 3 acceptable (stock mode)
 portfolio_manager_options = "options_v1"   # options mode
-portfolio_manager_hybrid = "hybrid_v3"     # hybrid mode
+portfolio_manager_hybrid = "hybrid_v3"
+free_hand_research = "research_v1"   # free-hand fund (python -m desk.free_hand), step 1
+free_hand_decide = "decide_v1"       # free-hand fund, step 2     # hybrid mode

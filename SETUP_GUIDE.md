@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **130 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **135 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -311,6 +311,30 @@ trading days compared with SPY (bought at the open after the reaction).
 - Write the strategy down first, then run `python -m desk.earnings_study --confirm`
   once to see the locked years.
 - Every report is saved to `data/backtests/earnings_events_*.csv`.
+
+## Step 12: The free-hand fund (the AI decides everything)
+
+```bash
+python -m desk.free_hand --dry-run    # see what it would do, without recording it
+python -m desk.free_hand              # decide and record it in the book (about $0.20 of AI)
+python -m desk.free_hand --status     # scoreboard only, no AI cost
+```
+
+The agent is told it is an expert portfolio manager whose only goal is to grow
+the account, with no rules on style, number of stocks or holding period. It
+picks up to 15 stocks or ETFs to research, gets fresh data on them (trend, news,
+earnings), then decides the whole portfolio with a thesis and exit plan for each
+position. The only limits are the account's: long stocks and ETFs, no options,
+margin or short selling, so it can never lose more than the account holds.
+
+- Run it about **once a week** (for example Monday after the open).
+- Place the printed **ORDERS** in Robinhood, sells first. The book in
+  `data/free_hand/book.json` assumes each order fills at the price shown; if a
+  fill differs, edit the shares or cash there. Some stocks cannot be bought in
+  fractional shares on Robinhood; skip those and tell Claude.
+- The **SCOREBOARD** compares the fund with the same money in SPY and shows the
+  AI cost. That comparison, week after week, is the only honest test: the AI
+  already knows how past years turned out, so it cannot be backtested.
 
 ---
 
