@@ -55,12 +55,13 @@ def test_skips_wide_spreads_and_thin_open_interest():
 # ---------- full team run in options mode ----------
 
 def reports(direction="bullish", posture="cautious", conviction=4, event_risk="low", contract=None,
-            mode="options", instrument="option", spot=20.0, entry_mult=1.0):
+            mode="options", instrument="option", spot=20.0, entry_mult=1.0, stop_mult=None, target_mult=None):
     tech = TechnicalReport(views=[TechnicalView(
         ticker="CHEAP", data_ok=True, trend="up" if direction == "bullish" else "down", direction=direction,
         setup="breakout" if direction == "bullish" else "breakdown", setup_quality=4,
-        entry=round(spot * entry_mult, 2), stop=round(spot * (0.95 if direction == "bullish" else 1.05), 2),
-        target=round(spot * (1.15 if direction == "bullish" else 0.85), 2),
+        entry=round(spot * entry_mult, 2),
+        stop=round(spot * (stop_mult or (0.95 if direction == "bullish" else 1.05)), 2),
+        target=round(spot * (target_mult or (1.15 if direction == "bullish" else 0.85)), 2),
         key_levels=[], evidence="e", risks="r", recommendation="candidate")], warnings=[])
     news = CatalystReport(views=[CatalystView(ticker="CHEAP", data_ok=True, next_earnings=None,
                                               days_to_earnings=None, event_risk=event_risk, sentiment="neutral",
@@ -325,3 +326,15 @@ def test_option_order_flags_an_untriggered_setup():
     run, _ = run_options(cheap_bars(), mode="hybrid", entry_mult=1.01)
     [o] = run.gate.approved
     assert o.option_type == "call" and o.trigger_price is not None
+
+
+
+def test_trigger_up_to_5pct_away_is_allowed_beyond_that_rejected():
+    # MGNI-like: breakout trigger ~4% above the live price.
+    run, _ = run_options(cheap_bars(), mode="hybrid", fetch_empty=True, instrument="shares",
+                         entry_mult=1.04, stop_mult=0.99, target_mult=1.25)
+    [o] = run.gate.approved
+    assert o.trigger_price is not None
+    run, _ = run_options(cheap_bars(), mode="hybrid", fetch_empty=True, instrument="shares",
+                         entry_mult=1.08, stop_mult=1.03, target_mult=1.30)
+    assert not run.gate.approved and "5%" in " ".join(run.gate.rejected[0].reasons)

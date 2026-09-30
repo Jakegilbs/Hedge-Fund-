@@ -16,6 +16,7 @@ MAX_LIMIT_DISTANCE = 0.02   # limit price must be within 2% of the last price
 MIN_ORDER_USD = 1.00        # Robinhood's minimum fractional order
 TRIGGER_GAP = 0.002         # entry more than 0.2% beyond the price = the setup has not triggered yet
 TRIGGER_SLIPPAGE = 0.005    # a buy-stop-limit may pay up to 0.5% above its trigger
+TRIGGER_MAX_DISTANCE = 0.05 # a stop-limit only fills at its trigger, so it may sit up to 5% away
 
 
 def pending_trigger(direction: str, entry: float | None, price: float | None) -> float | None:
@@ -70,8 +71,11 @@ def floor_shares(x: float) -> float:
 def check(decision: PMDecision, *, equity: float, cash: float, pnl_today: float,
           positions: dict[str, float], last_prices: dict[str, float], stale: set[str],
           allowlist: set[str], risk: RiskLimits, regime: RegimeReport,
-          catalysts: CatalystReport) -> GateResult:
+          catalysts: CatalystReport, max_limit_distance: float = MAX_LIMIT_DISTANCE) -> GateResult:
     """Return the orders that pass every rule, with shares recomputed.
+
+    max_limit_distance: how far the limit may be from the last price. Plain limit orders
+    use 2% (catches invented prices); stop-limit orders at a trigger may sit further away.
 
     positions: ticker -> shares held. last_prices: ticker -> latest price.
     """
@@ -124,8 +128,8 @@ def check(decision: PMDecision, *, equity: float, cash: float, pnl_today: float,
             reasons.append("no news/catalyst report for this ticker")
         if not (stop < entry < target):
             reasons.append(f"levels out of order: stop {stop} < entry {entry} < target {target} required")
-        if price and abs(entry / price - 1) > MAX_LIMIT_DISTANCE:
-            reasons.append(f"limit ${entry} is more than {MAX_LIMIT_DISTANCE:.0%} from last price ${price:.2f}")
+        if price and abs(entry / price - 1) > max_limit_distance:
+            reasons.append(f"limit ${entry} is more than {max_limit_distance:.0%} from last price ${price:.2f}")
 
         if entry > stop and (entry - stop) / entry > risk.max_stop_distance_pct:
             reasons.append(f"stop {(entry - stop) / entry:.1%} below entry; the limit is "
@@ -314,7 +318,8 @@ def check_hybrid(decision, *, cash: float, pnl_today: float, equity: float, posi
                                          target_price=view.target, reward_risk=view.reward_risk_checked or 0,
                                          thesis=o.thesis, bear_case=o.bear_case, conviction=o.conviction)]),
                 equity=equity, cash=cash, pnl_today=pnl_today, positions=held, last_prices=last_prices,
-                stale=stale, allowlist=allowlist, risk=risk, regime=regime, catalysts=catalysts)
+                stale=stale, allowlist=allowlist, risk=risk, regime=regime, catalysts=catalysts,
+                max_limit_distance=TRIGGER_MAX_DISTANCE if trigger else MAX_LIMIT_DISTANCE)
         result.rejected += sub.rejected
         result.halted = result.halted or sub.halted
         for a in sub.approved:
