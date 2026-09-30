@@ -322,14 +322,20 @@ def _options_pm(run: TeamRun, settings: Settings, runner: ClaudeRunner, account:
     picks = [{"ticker": t, "direction": views[t].direction,
               "spot": snaps[t]["live_price"] or snaps[t]["close"], "earnings": earnings.get(t)}
              for t in (x.upper() for x in tradeable) if t in snaps]
-    run.options_menu = options.options_menu(picks, account.cash, settings.options, now.date(),
-                                            fetch=fetch_option_chains)
+    if hybrid and not settings.calls:
+        # Shares only: no option chains are fetched; every bullish pick is offered as shares.
+        run.options_menu = {p["ticker"]: {"direction": p["direction"], "contract": None,
+                                          "note": "calls are off (shares only)"} for p in picks}
+    else:
+        run.options_menu = options.options_menu(picks, account.cash, settings.options, now.date(),
+                                                fetch=fetch_option_chains)
     for m in run.options_menu.values():
         if m["contract"]:
             m["instrument"] = "option"
         elif hybrid and m["direction"] == "bullish":
             m["instrument"] = "shares"
-            m["note"] = f"no suitable call ({m['note']}); offered as fractional shares instead"
+            m["note"] = ("fractional shares (calls are off)" if not settings.calls else
+                         f"no suitable call ({m['note']}); offered as fractional shares instead")
         else:
             m["instrument"] = None
     offered = {t: m for t, m in run.options_menu.items() if m["instrument"]}
@@ -355,6 +361,9 @@ def _options_pm(run: TeamRun, settings: Settings, runner: ClaudeRunner, account:
         technical_report=tech_rep.model_dump(), catalyst_report=news_rep.model_dump(),
         options_menu=run.options_menu,
         max_stop_distance_pct=f"{risk.max_stop_distance_pct * 100:g}",
+        instruments=("CALLS ARE OFF: every trade is fractional shares of the stock. The backtest showed "
+                     "long calls lost money without a proven stock-picking edge." if not settings.calls else
+                     "A long call when the menu offers one; fractional shares when no suitable call exists."),
     )
     run.pm = runner.run(prompt, rendered, HybridDecision if hybrid else OptionsDecision,
                         settings.models["portfolio_manager"],

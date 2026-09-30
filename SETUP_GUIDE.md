@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **107 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **110 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -161,7 +161,9 @@ call and costs nothing.
 
 The desk runs in **hybrid** mode (`config/desk.toml`, `[strategy] instrument = "hybrid"`):
 a bullish pick is a **long call** when a liquid, affordable one exists, otherwise
-**fractional shares** of the stock. Two rules come from the backtest (Step 9):
+**fractional shares** of the stock. **Calls are switched off for now**
+(`calls = false`): every trade is fractional shares until a setup proves an edge.
+Two more rules come from the backtest (Step 9):
 **bullish setups only** (no puts), and **no new trades while SPY is below its
 50-day average** (the run says so at the top and costs nothing that day).
 Your Robinhood Agentic account needs **options trading enabled** (Robinhood asks
@@ -240,6 +242,7 @@ python -m desk.backtest --option-stop 0.5      # a -50% option stop instead of -
 python -m desk.backtest --target-r 3 --hold 10 # bigger target, shorter hold
 python -m desk.backtest --spread 0.05          # tighter option spreads
 python -m desk.backtest --setups breakout,pullback --with-market   # only some setups, only with the trend
+python -m desk.backtest --setups momentum,dip_buy  # the two strategy types being tested
 python -m desk.backtest --half first           # tune on the first half of the years...
 python -m desk.backtest --half second          # ...then check the same settings on the second half
 ```

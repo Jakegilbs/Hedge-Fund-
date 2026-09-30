@@ -15,6 +15,8 @@ instrument = "hybrid"
 # trades taken while SPY was below its 50-day average did worse.
 bullish_only = true            # no puts: calls or shares on bullish setups only
 market_filter = true           # no new trades while SPY is below its 50-day average
+calls = false                  # shares only for now: calls lost money in the backtest without a
+                               # proven edge (they multiply the edge, and there was none to multiply)
 
 [options]
 # How code picks the one contract offered for each candidate.
@@ -105,4 +107,4 @@ catalyst_analyst = "v1"
 regime_analyst = "v1"
 portfolio_manager = "v3"   # v3: all-in, conviction 3 acceptable (stock mode)
 portfolio_manager_options = "options_v1"   # options mode
-portfolio_manager_hybrid = "hybrid_v2"     # hybrid mode
+portfolio_manager_hybrid = "hybrid_v3"     # hybrid mode

@@ -98,7 +98,7 @@ def legacy(mode):
     """The rules before the backtest: puts allowed, -15% option stop, no market filter."""
     from dataclasses import replace
     s = load_settings()
-    return replace(s, instrument=mode, bullish_only=False, market_filter=False,
+    return replace(s, instrument=mode, bullish_only=False, market_filter=False, calls=True,
                    options=replace(s.options, stop_on_stock=False))
 
 
@@ -349,11 +349,11 @@ def test_trigger_up_to_5pct_away_is_allowed_beyond_that_rejected():
 
 # ---------- rules from the backtest: stock stop, bullish only, market filter ----------
 
-def live_rules(mode="hybrid"):
+def live_rules(mode="hybrid", calls=True):
     from dataclasses import replace
-    s = replace(load_settings(), instrument=mode)
+    s = load_settings()
     assert s.bullish_only and s.market_filter and s.options.stop_on_stock   # what config/desk.toml says
-    return s
+    return replace(s, instrument=mode, calls=calls)
 
 
 def market_bars(spy_drift):
@@ -397,3 +397,22 @@ def test_bullish_only_never_trades_a_put():
     assert s.directions == ("bullish",)
     run, claude = run_options(market_bars(0.004), mode="hybrid", settings=s, direction="bearish")
     assert run.pm is None and "HybridDecision" not in claude.calls     # dropped before the PM
+
+
+def test_calls_off_trades_shares_without_fetching_chains():
+    assert load_settings().calls is False                   # config/desk.toml: shares only for now
+    fetched = []
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from desk.llm import ClaudeRunner
+    bars = market_bars(0.004)
+    spot = float(bars["CHEAP"]["Close"].iloc[-1])
+    claude = FakeClaude(reports(mode="hybrid", instrument="shares", spot=round(spot, 2)))
+    run = run_team(live_rules(calls=False), ClaudeRunner(client=claude), AccountState(100, 100), bars,
+                   fetch_catalysts=lambda t, etfs=frozenset(): {"today": "2026-09-30", "tickers": {}},
+                   tickers=["CHEAP"], universe=["SPY", "CHEAP"],
+                   now=datetime(2026, 9, 30, 17, 0, tzinfo=ZoneInfo("America/New_York")),
+                   fetch_option_chains=lambda *a, **k: fetched.append(a) or {})
+    assert fetched == [] and run.options_menu["CHEAP"]["instrument"] == "shares"
+    [o] = run.gate.approved
+    assert o.action == "buy" and not hasattr(o, "contract_symbol")

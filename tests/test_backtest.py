@@ -21,7 +21,7 @@ def test_signal_frame_matches_live_setup_rules(df):
     fired = 0
     for t in range(150, len(df)):
         live = {s["setup"]: s for s in (fn(df.iloc[:t + 1]) for fn in SETUPS) if s}
-        vec = {name for name in bt.SETUP_NAMES if sig[name].iloc[t]}
+        vec = {name for name in bt.LIVE_SETUP_NAMES if sig[name].iloc[t]}
         assert vec == set(live), (t, vec, set(live))
         for name, s in live.items():
             assert sig[f"{name}_entry"].iloc[t] == pytest.approx(s["entry"], abs=0.011)
@@ -174,3 +174,34 @@ def test_select_trades_filters_setups_market_and_half():
     assert list(bt.select_trades(t, with_market=True).ticker) == ["AAA", "CCC"]   # bearish while market up: out
     assert list(bt.select_trades(t, half="first").ticker) == ["AAA"]
     assert list(bt.select_trades(t, half="second").ticker) == ["BBB", "CCC"]
+
+
+def test_momentum_and_dip_buy_signals():
+    from desk.indicators import ema, rsi, sma
+    df = make_bars(500, drift=0.003, seed=21)           # a strong, steady winner
+    sig = bt.signal_frame(df)
+    c = df["Close"]
+    t = len(df) - 1
+    assert c.iloc[t] / c.iloc[t - 126] - 1 >= bt.MOMENTUM_MIN_6M
+    assert bool(sig["momentum"].iloc[t]) == bool(
+        c.iloc[t] > sma(c, 200).iloc[t] and ema(c, 50).iloc[t] > sma(c, 200).iloc[t]
+        and c.iloc[t] > ema(c, 20).iloc[t] and c.iloc[t] >= 0.9 * df["High"].tail(252).max())
+    # A sharp two-day drop inside the uptrend is a dip_buy.
+    dip = df.copy()
+    for k, f in ((-2, 0.97), (-1, 0.97)):
+        dip.iloc[k:, dip.columns.get_loc("Close")] *= f
+    s2 = bt.signal_frame(dip)
+    assert rsi(dip["Close"], 2).iloc[-1] < bt.DIP_RSI2 and s2["dip_buy"].iloc[-1]
+    assert s2["dip_buy_stop"].iloc[-1] < s2["dip_buy_entry"].iloc[-1]
+
+
+def test_line_exits_replace_the_target():
+    fill = bt.Fill(0, 100.0)
+    cfg = bt.BTConfig(slippage_pct=0.0)
+    rows = [(100, 101, 99, 100), (101, 125, 100, 124), (124, 126, 118, 119)]
+    line = np.array([90.0, 110.0, 120.0])                     # momentum: close below the 20-day line
+    out = bt.simulate_shares(*arrays(rows), fill, "bullish", 100, 95, cfg, exit_line=(line, "below", 40))
+    assert out["exit_reason"] == "exit line" and out["exit_price"] == 119     # rode past the 2R target
+    bounce = np.array([101.0, 100.5, 130.0])                  # dip_buy: first close above the 5-day line
+    out = bt.simulate_shares(*arrays(rows), fill, "bullish", 100, 95, cfg, exit_line=(bounce, "above", 10))
+    assert out["exit_reason"] == "exit line" and out["days_held"] == 1

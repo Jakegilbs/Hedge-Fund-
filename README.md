@@ -13,7 +13,10 @@ stop, +100% take profit, out 5 days before expiry).
 Rules set from the backtest (`python -m desk.backtest`): **bullish setups only**
 (bearish setups lost money), **no new trades while SPY is below its 50-day
 average**, and the option stop is the **stock's** stop level (a -15% option stop
-fired on ordinary daily noise). All three are switches in `config/desk.toml`.
+fired on ordinary daily noise). Calls are also off for now (`calls = false`):
+every trade is fractional shares. Two new strategy types, **momentum** and
+**dip_buy**, are in the backtester only; the one that proves an edge goes live.
+All of these are switches in `config/desk.toml`.
 
 **Status: Level 1 (you approve and place every trade).** The analyst team runs
 on real market data, the Gatekeeper checks and sizes every order, and you place

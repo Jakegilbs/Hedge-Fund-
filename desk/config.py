@@ -58,6 +58,7 @@ class Settings:
     options: "OptionsConfig" = None      # set by load_settings
     bullish_only: bool = False           # no puts / bearish trades
     market_filter: bool = False          # new trades only while SPY is above its 50-day average
+    calls: bool = True                   # hybrid mode: False = fractional shares only, no options
 
     @property
     def directions(self) -> tuple[str, ...]:
@@ -122,6 +123,7 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         options=OptionsConfig(**raw.get("options", {})),
         bullish_only=bool(raw.get("strategy", {}).get("bullish_only", False)),
         market_filter=bool(raw.get("strategy", {}).get("market_filter", False)),
+        calls=bool(raw.get("strategy", {}).get("calls", True)),
     )
 
 

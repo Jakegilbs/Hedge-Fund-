@@ -44,9 +44,21 @@ from .scanner import MAX_20D_MOVE, MAX_RSI, MIN_ATR_PCT, MIN_RSI
 
 BACKTEST_DIR = DATA_DIR / "backtests"
 BACKTEST_CACHE = DATA_DIR / "cache" / "bars_long"
-SETUP_NAMES = ("breakout", "pullback", "vcp", "breakdown", "bear_rally")
+LIVE_SETUP_NAMES = ("breakout", "pullback", "vcp", "breakdown", "bear_rally")   # desk/indicators.py
+# Candidate strategies tested here before they go live:
+#   momentum: a strong 6-month winner near its high, bought at the close and held
+#             while it stays above its 20-day average (max 40 days).
+#   dip_buy:  a stock in an uptrend after a sharp 2-day drop (RSI(2) below 10),
+#             bought at the close and sold on the first close above its 5-day average (max 10 days).
+SETUP_NAMES = LIVE_SETUP_NAMES + ("momentum", "dip_buy")
 DIRECTION = {"breakout": "bullish", "pullback": "bullish", "vcp": "bullish",
-             "breakdown": "bearish", "bear_rally": "bearish"}
+             "breakdown": "bearish", "bear_rally": "bearish", "momentum": "bullish", "dip_buy": "bullish"}
+# Exit styles other than stop / target / max_hold_days: (line column, exit when close is "below"/"above" it,
+# max trading days held). These setups have no fixed target; the line is the exit.
+EXIT_LINE = {"momentum": ("ema20", "below", 40), "dip_buy": ("sma5", "above", 10)}
+MOMENTUM_MIN_6M = 0.20      # at least +20% over 6 months
+MOMENTUM_NEAR_HIGH = 0.90   # within 10% of the 52-week high
+DIP_RSI2 = 10.0
 MIN_TRADES = 30   # fewer trades than this: too few to judge
 
 
@@ -117,6 +129,19 @@ def signal_frame(df: pd.DataFrame) -> pd.DataFrame:
     out["bear_rally_entry"] = l
     out["bear_rally_stop"] = np.maximum(h.rolling(5).max(), l + 1.25 * a)
 
+    ret126 = c / c.shift(126) - 1
+    out["momentum"] = ((n >= 252) & (c > s200) & (e50 > s200) & (c > e20) & (ret126 >= MOMENTUM_MIN_6M)
+                       & (c >= MOMENTUM_NEAR_HIGH * h.rolling(252, min_periods=200).max()))
+    out["momentum_entry"] = c
+    out["momentum_stop"] = c - 2.0 * a
+
+    out["dip_buy"] = (n >= 220) & (c > s200) & (e50 > s200) & (rsi(c, 2) < DIP_RSI2)
+    out["dip_buy_entry"] = c
+    out["dip_buy_stop"] = c - 2.5 * a
+
+    out["ema20"] = e20
+    out["sma5"] = c.rolling(5).mean()
+
     for name in SETUP_NAMES:
         out[f"{name}_entry"] = out[f"{name}_entry"].round(2)
         out[f"{name}_stop"] = out[f"{name}_stop"].round(2)
@@ -184,22 +209,35 @@ def find_fill(o, h, l, c, i: int, direction: str, entry: float, cfg: BTConfig) -
     return None
 
 
+def _line_exit(c: float, line: float, side: str) -> bool:
+    return math.isfinite(line) and (c < line if side == "below" else c > line)
+
+
 def simulate_shares(o, h, l, c, fill: Fill, direction: str, entry: float, stop: float,
-                    cfg: BTConfig) -> dict:
+                    cfg: BTConfig, exit_line=None) -> dict:
     """Exit at the stop, the target or after max_hold_days. Gaps fill at the open.
-    When the stop and the target are both touched in one day, the stop is assumed."""
+    When the stop and the target are both touched in one day, the stop is assumed.
+    exit_line = (values, "below"/"above", max days): no target; exit at the close
+    once the close crosses the line (momentum, dip_buy)."""
     bull = direction == "bullish"
     sign = 1 if bull else -1
     risk = (entry - stop) * sign
     target = entry + sign * cfg.target_r * risk
+    max_hold = cfg.max_hold_days
+    if exit_line is not None:
+        line, side, max_hold = exit_line
+        target = math.inf if bull else -math.inf
     j, px = fill.day, fill.price
     best = px
     exit_day, exit_px, reason = None, None, None
     for k in range(j, len(c)):
         lo, hi = (l[k], h[k]) if bull else (h[k], l[k])       # worst, best price of the day
-        if k == j:     # entry day: only the stop can be judged after the fill
+        if k == j:     # entry day: only the stop (and a close-based exit) can be judged after the fill
             if (lo <= stop) if bull else (lo >= stop):
                 exit_day, exit_px, reason = k, stop, "stop"
+                break
+            if exit_line is not None and _line_exit(c[k], line[k], side):
+                exit_day, exit_px, reason = k, c[k], "exit line"
                 break
             continue
         best = max(best, hi) if bull else min(best, hi)
@@ -211,7 +249,9 @@ def simulate_shares(o, h, l, c, fill: Fill, direction: str, entry: float, stop: 
             exit_day, exit_px, reason = k, o[k], "target (gap)"
         elif (hi >= target) if bull else (hi <= target):
             exit_day, exit_px, reason = k, target, "target"
-        elif k - j >= cfg.max_hold_days:
+        elif exit_line is not None and _line_exit(c[k], line[k], side):
+            exit_day, exit_px, reason = k, c[k], "exit line"
+        elif k - j >= max_hold:
             exit_day, exit_px, reason = k, c[k], "time"
         if exit_day is not None:
             break
@@ -257,7 +297,7 @@ def option_cost_estimate(spot: float, direction: str, vol: float, cfg: BTConfig)
 
 
 def simulate_option(o, h, l, c, dates, fill: Fill, direction: str, vol: float, cfg: BTConfig,
-                    stock_stop: float | None = None) -> dict | None:
+                    stock_stop: float | None = None, exit_line=None) -> dict | None:
     """Estimated long call/put with the live exit plan. Buys halfway between mid and ask,
     sells halfway between mid and bid (the spread is paid both ways); implied
     volatility is held constant, so volatility crush is not modelled.
@@ -312,7 +352,9 @@ def simulate_option(o, h, l, c, dates, fill: Fill, direction: str, vol: float, c
             exit_day, exit_v, reason = k, tp_v, "take profit"
         elif (dates[k] - dates[j]).days >= last_day:
             exit_day, exit_v, reason = k, value(c[k], k), "expiry exit"
-        elif k - j >= cfg.max_hold_days:
+        elif exit_line is not None and _line_exit(c[k], exit_line[0][k], exit_line[1]):
+            exit_day, exit_v, reason = k, value(c[k], k), "exit line"
+        elif k - j >= (exit_line[2] if exit_line is not None else cfg.max_hold_days):
             exit_day, exit_v, reason = k, value(c[k], k), "time"
         if exit_day is not None:
             break
@@ -334,6 +376,7 @@ def trades_for_ticker(ticker: str, df: pd.DataFrame, cfg: BTConfig, start: pd.Ti
     while its previous trade is still open. Returns (trades, filtered counts)."""
     sig = signal_frame(df)
     o, h, l, c = (df[k].to_numpy(float) for k in ("Open", "High", "Low", "Close"))
+    lines = {col: sig[col].to_numpy(float) for col in ("ema20", "sma5")}
     dates = list(df.index)
     spy_up = None
     if spy is not None:
@@ -383,12 +426,17 @@ def trades_for_ticker(ticker: str, df: pd.DataFrame, cfg: BTConfig, start: pd.Ti
             t["fill_date"] = dates[fill.day].date()
             t["fill_price"] = round(fill.price, 4)
             end = fill.day
+            ex = None
+            if name in EXIT_LINE:
+                col, side, days = EXIT_LINE[name]
+                ex = (lines[col], side, days)
             if t["shares_ok"]:
-                sh = simulate_shares(o, h, l, c, fill, direction, entry, stop, cfg)
+                sh = simulate_shares(o, h, l, c, fill, direction, entry, stop, cfg, exit_line=ex)
                 end = sh.pop("exit_day")
                 sh["exit_date"] = dates[end].date()
                 t.update(sh)
-            opt = simulate_option(o, h, l, c, dates, fill, direction, row.vol20, cfg, stock_stop=stop)
+            opt = simulate_option(o, h, l, c, dates, fill, direction, row.vol20, cfg, stock_stop=stop,
+                                  exit_line=ex)
             if opt:
                 oe = opt.pop("opt_exit_day")
                 opt["opt_exit_date"] = dates[oe].date()
@@ -582,7 +630,9 @@ def report(trades: pd.DataFrame, filtered: dict[str, int], cfg: BTConfig, portfo
               f"{cfg.max_stop_distance_pct:.0%} away (shares); options ~{cfg.option_delta} delta, "
               f"{cfg.option_dte} days, spread {cfg.option_spread_pct:.0%}, stop "
               f"{'at the stock stop' if cfg.option_stop_on_stock else f'-{cfg.option_stop_pct:.0%}'}, "
-              f"take profit +{cfg.option_take_profit_pct:.0%}"]
+              f"take profit +{cfg.option_take_profit_pct:.0%}",
+              "momentum and dip_buy have no target: momentum exits on a close below its 20-day average "
+              "(max 40 days), dip_buy on a close above its 5-day average (max 10 days)"]
     if not filled:
         return "\n".join(lines + ["No trades filled."])
 
@@ -628,7 +678,8 @@ def report(trades: pd.DataFrame, filtered: dict[str, int], cfg: BTConfig, portfo
                      f"AI cost ~${p.ai_cost:.0f} -> net ${p.net_after_ai:.2f}")
     lines += ["", "Read this with care: option prices are estimated, the AI analysts are not simulated,",
               "and today's stock list leaves out companies that failed (results lean optimistic).",
-              f"A setup needs {MIN_TRADES}+ trades and a positive expectancy in BOTH columns to count as an edge."]
+              f"A setup counts as an edge only with {MIN_TRADES}+ trades and a positive SHARES expectancy in both "
+              "halves of the period (--half first, --half second)."]
     return "\n".join(lines)
 
 
@@ -702,9 +753,14 @@ def main() -> None:
         print("Filters: " + "; ".join(notes))
     portfolios = []
     if not trades.empty:
-        for mode, label in (("hybrid", "hybrid: call if affordable, else shares"),
-                            ("shares", "shares only")):
+        calls = "on" if live.calls else "off in the live desk"
+        for mode, label in (("shares", "all setups, shares"),
+                            ("hybrid", f"all setups, call if affordable ({calls})")):
             portfolios.append(run_portfolio(trades, cfg, mode, False, label))
+        for name in setups:                      # one account per setup, to compare them
+            part = trades[trades.setup == name]
+            if DIRECTION[name] == "bullish" and not part.empty:
+                portfolios.append(run_portfolio(part, cfg, "shares", False, f"{name} only, shares"))
     text = report(trades, filtered, cfg, portfolios, args.years)
     print(text)
 
