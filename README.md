@@ -95,6 +95,7 @@ desk/backtest.py        replays history: setups traded as shares and estimated o
 desk/rotation.py        monthly momentum rotation backtest vs SPY and an equal-weight benchmark
 desk/membership.py      historical S&P 500 membership, so backtests only rank stocks that were members then
 desk/earnings.py        earnings history (Yahoo, cached) and the positive earnings-drift flag
+desk/earnings_study.py  earnings event study: surprise, reaction, and the next 5/20/60 days vs SPY
 tests/                  offline tests with a fake Claude client
 ```
 

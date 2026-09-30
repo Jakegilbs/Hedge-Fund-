@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **127 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **130 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -293,6 +293,24 @@ How to read it:
   one lookback winning), not the single best row: out of 60 versions, a few
   win by luck.
 - **max drop** is the worst fall from a peak. Plan for it to happen again.
+
+## Step 11: Earnings event study (free, no AI)
+
+```bash
+python -m desk.earnings_study
+```
+
+For every quarterly report of every S&P 500 member since 2016 it shows the EPS
+surprise, how the stock reacted, and what it did over the next 5, 20 and 60
+trading days compared with SPY (bought at the open after the reaction).
+
+- Only **2016-2021** is shown. The years from 2022 on are **locked** so that a
+  pattern found by searching the tables can be tested once on data it never saw.
+- Look for groups with a large excess return, **|t| above 3**, **100+ reports**,
+  and a steady result year by year.
+- Write the strategy down first, then run `python -m desk.earnings_study --confirm`
+  once to see the locked years.
+- Every report is saved to `data/backtests/earnings_events_*.csv`.
 
 ---
 
