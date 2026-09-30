@@ -98,6 +98,17 @@ def _print_gate(gate) -> None:
                   f"take profit at ${o.take_profit_price:.2f}, sell by {o.exit_by} at the latest\n"
                   f"       stock view: entry {o.stock_entry}, wrong below/above {o.stock_stop}, "
                   f"target {o.stock_target}")
+            if o.trigger_price:
+                side = "above" if o.option_type == "call" else "below"
+                print(f"       WAIT FOR THE TRIGGER: place this order only after {o.ticker} trades "
+                      f"{side} ${o.trigger_price:.2f}. If it never does, skip it.")
+        elif o.action == "buy" and o.trigger_price:
+            print(f"  BUY  {o.ticker}: {o.shares} shares, STOP-LIMIT: stop (trigger) ${o.trigger_price:.2f}, "
+                  f"limit ${o.limit_price:.2f} (${o.notional_usd:.2f})\n"
+                  f"       The order only activates if {o.ticker} trades at or above ${o.trigger_price:.2f} "
+                  f"(the setup's trigger). If it never does, nothing is bought.\n"
+                  f"       After it fills, set STOP ${o.stop_price:.2f}; target ${o.target_price:.2f}; "
+                  f"reward-to-risk {o.reward_risk}; max loss ${o.risk_usd:.2f}")
         elif o.action == "buy":
             print(f"  BUY  {o.ticker}: {o.shares} shares, LIMIT ${o.limit_price:.2f} (${o.notional_usd:.2f})\n"
                   f"       then set STOP ${o.stop_price:.2f}; target ${o.target_price:.2f}; "

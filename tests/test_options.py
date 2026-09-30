@@ -55,11 +55,11 @@ def test_skips_wide_spreads_and_thin_open_interest():
 # ---------- full team run in options mode ----------
 
 def reports(direction="bullish", posture="cautious", conviction=4, event_risk="low", contract=None,
-            mode="options", instrument="option", spot=20.0):
+            mode="options", instrument="option", spot=20.0, entry_mult=1.0):
     tech = TechnicalReport(views=[TechnicalView(
         ticker="CHEAP", data_ok=True, trend="up" if direction == "bullish" else "down", direction=direction,
         setup="breakout" if direction == "bullish" else "breakdown", setup_quality=4,
-        entry=spot, stop=round(spot * (0.95 if direction == "bullish" else 1.05), 2),
+        entry=round(spot * entry_mult, 2), stop=round(spot * (0.95 if direction == "bullish" else 1.05), 2),
         target=round(spot * (1.15 if direction == "bullish" else 0.85), 2),
         key_levels=[], evidence="e", risks="r", recommendation="candidate")], warnings=[])
     news = CatalystReport(views=[CatalystView(ticker="CHEAP", data_ok=True, next_earnings=None,
@@ -293,3 +293,35 @@ def test_hybrid_bearish_without_a_put_is_not_tradeable():
 def test_hybrid_rejects_shares_when_a_call_exists():
     run, _ = run_options(cheap_bars(), mode="hybrid", instrument="shares")
     assert not run.gate.approved and "only allowed" in " ".join(run.gate.rejected[0].reasons)
+
+
+
+def test_pending_trigger_rules():
+    from desk.gatekeeper import pending_trigger
+    assert pending_trigger("bullish", 15.00, 14.85) == 15.00       # breakout not cleared yet
+    assert pending_trigger("bullish", 14.86, 14.85) is None        # within 0.2%: already there
+    assert pending_trigger("bullish", 14.50, 14.85) is None        # price already above entry
+    assert pending_trigger("bearish", 9.00, 9.30) == 9.00          # breakdown not broken yet
+    assert pending_trigger("bearish", 9.40, 9.30) is None
+
+
+def test_hybrid_shares_wait_for_the_breakout_trigger():
+    # Entry 1% above the current price, like ABCL at 14.85 with a 15.00 breakout level.
+    run, _ = run_options(cheap_bars(), mode="hybrid", fetch_empty=True, instrument="shares", entry_mult=1.01)
+    [o] = run.gate.approved
+    spot = run.data["technical"]["tickers"]["CHEAP"]["close"]
+    assert o.trigger_price == round(spot * 1.01, 2)
+    assert o.limit_price == round(o.trigger_price * 1.005, 2)      # stop-limit caps what it pays
+    assert o.risk_usd <= 100 * 0.10 + 0.01                          # still within the 10% stop rule
+
+
+def test_hybrid_shares_already_triggered_buy_at_market_price():
+    run, _ = run_options(cheap_bars(), mode="hybrid", fetch_empty=True, instrument="shares")
+    [o] = run.gate.approved
+    assert o.trigger_price is None
+
+
+def test_option_order_flags_an_untriggered_setup():
+    run, _ = run_options(cheap_bars(), mode="hybrid", entry_mult=1.01)
+    [o] = run.gate.approved
+    assert o.option_type == "call" and o.trigger_price is not None

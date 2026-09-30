@@ -336,5 +336,6 @@ def _options_pm(run: TeamRun, settings: Settings, runner: ClaudeRunner, account:
         run.pm.report, cash=account.cash, pnl_today=account.pnl_today, equity=account.equity,
         open_positions=len(account.positions), menu=run.options_menu, technical=tech_rep,
         catalysts=news_rep, regime=run.analysts["regime_analyst"].report, risk=risk, opts=opts,
-        allowlist=set(allow))
+        allowlist=set(allow),
+        last_prices={t: s["live_price"] or s["close"] for t, s in snaps.items() if s["close"] is not None})
     return run

@@ -14,6 +14,23 @@ from .schemas import CatalystReport, PMDecision, RegimeReport
 
 MAX_LIMIT_DISTANCE = 0.02   # limit price must be within 2% of the last price
 MIN_ORDER_USD = 1.00        # Robinhood's minimum fractional order
+TRIGGER_GAP = 0.002         # entry more than 0.2% beyond the price = the setup has not triggered yet
+TRIGGER_SLIPPAGE = 0.005    # a buy-stop-limit may pay up to 0.5% above its trigger
+
+
+def pending_trigger(direction: str, entry: float | None, price: float | None) -> float | None:
+    """The stock price that must trade before entering, or None if the setup has already triggered.
+
+    Bullish: entry above the current price (e.g. a breakout level not yet cleared).
+    Bearish: entry below the current price (a breakdown level not yet broken).
+    """
+    if not entry or not price:
+        return None
+    if direction == "bullish" and entry > price * (1 + TRIGGER_GAP):
+        return round(entry, 2)
+    if direction == "bearish" and entry < price * (1 - TRIGGER_GAP):
+        return round(entry, 2)
+    return None
 
 
 @dataclass
@@ -28,6 +45,7 @@ class ApprovedOrder:
     notional_usd: float = 0.0
     risk_usd: float = 0.0
     reason: str = ""
+    trigger_price: float | None = None   # buy-stop: only enter once the stock trades at/above this
 
 
 @dataclass
@@ -165,11 +183,13 @@ class ApprovedOptionOrder:
     stock_stop: float | None = None
     stock_target: float | None = None
     reason: str = ""
+    trigger_price: float | None = None   # only buy once the STOCK trades beyond this price
 
 
 def check_options(decision, *, cash: float, pnl_today: float, equity: float, open_positions: int,
                   menu: dict[str, dict], technical, catalysts: CatalystReport, regime: RegimeReport,
-                  risk: RiskLimits, opts, allowlist: set[str]) -> GateResult:
+                  risk: RiskLimits, opts, allowlist: set[str],
+                  last_prices: dict[str, float] | None = None) -> GateResult:
     """Approve at most one long call or put from the options menu, sized with all available cash."""
     from datetime import date, timedelta
 
@@ -234,6 +254,7 @@ def check_options(decision, *, cash: float, pnl_today: float, equity: float, ope
             stop_price=round(price * (1 - opts.stop_loss_pct), 2),
             take_profit_price=round(price * (1 + opts.take_profit_pct), 2),
             exit_by=exit_by.isoformat(), stock_entry=view.entry, stock_stop=view.stop, stock_target=view.target,
+            trigger_price=pending_trigger(o.direction, view.entry, (last_prices or {}).get(t)),
             reason=f"PM conviction {o.conviction}/5"))
     return result
 
@@ -268,7 +289,7 @@ def check_hybrid(decision, *, cash: float, pnl_today: float, equity: float, posi
                                                     bear_case=o.bear_case, conviction=o.conviction)]),
                 cash=cash, pnl_today=pnl_today, equity=equity, open_positions=sum(1 for v in held.values() if v),
                 menu=menu, technical=technical, catalysts=catalysts, regime=regime, risk=risk, opts=opts,
-                allowlist=allowlist)
+                allowlist=allowlist, last_prices=last_prices)
         else:
             view = views.get(t)
             reasons = []
@@ -282,10 +303,14 @@ def check_hybrid(decision, *, cash: float, pnl_today: float, equity: float, posi
                 result.rejected.append(Rejection(t, "buy shares", reasons))
                 continue
             price = last_prices.get(t) or view.entry
+            # A setup that has not triggered yet (e.g. a breakout still below its level) is
+            # entered with a buy-stop-limit at the trigger, sized and risk-checked at that price.
+            trigger = pending_trigger("bullish", view.entry, price)
+            limit = round(trigger * (1 + TRIGGER_SLIPPAGE), 2) if trigger else round(price, 2)
             sub = check(
                 PMDecision(market_view="", position_updates=[], warnings=[], honest_assessment="",
                            orders=[Order(action="buy", ticker=t, shares=0, order_type="limit",
-                                         limit_price=round(price, 2), stop_price=view.stop,
+                                         limit_price=limit, stop_price=view.stop,
                                          target_price=view.target, reward_risk=view.reward_risk_checked or 0,
                                          thesis=o.thesis, bear_case=o.bear_case, conviction=o.conviction)]),
                 equity=equity, cash=cash, pnl_today=pnl_today, positions=held, last_prices=last_prices,
@@ -295,6 +320,8 @@ def check_hybrid(decision, *, cash: float, pnl_today: float, equity: float, posi
         for a in sub.approved:
             if getattr(a, "action", "buy") == "sell":
                 continue
+            if o.instrument == "shares" and trigger:
+                a.trigger_price = trigger
             result.approved.append(a)
             held[t] = 1.0          # counts toward the one-position limit for later orders
     return result
