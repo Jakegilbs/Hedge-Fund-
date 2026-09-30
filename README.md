@@ -6,7 +6,7 @@ bullish and bearish setups, code picks one liquid, affordable contract per
 candidate, a portfolio manager chooses at most one, and code (not AI) sizes it
 with all available cash and enforces every limit: one position at a time,
 conviction 3+/5, stock reward-to-risk 1.5+, no earnings inside the option's
-life, and an exit plan on every trade (-15% stop, +100% take profit, out a week
+life, and an exit plan on every trade (-15% stop, +100% take profit, out 5 days
 before expiry). Set `instrument = "stock"` in `config/desk.toml` to trade shares instead.
 
 **Status: Level 1 (you approve and place every trade).** The analyst team runs

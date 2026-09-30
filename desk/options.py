@@ -66,17 +66,19 @@ def select_contract(chains: dict[str, pd.DataFrame], direction: str, spot: float
     Returns (contract, note). contract is None when nothing qualifies; note says why.
     """
     call = direction == "bullish"
+    kind = "call" if call else "put"
     earn = date.fromisoformat(earnings) if earnings else None
     eligible, cheapest_ok = [], None
     skipped = {"expiry after earnings": 0, "no bid/ask": 0, "open interest too low": 0,
                "spread too wide": 0, "delta out of range": 0, "too expensive": 0}
-    expiries_in_window = 0
+    expiries_in_window, rows_seen = 0, 0
     for expiry, df in chains.items():
         exp = date.fromisoformat(expiry)
         dte = (exp - today).days
         if not (cfg.min_days_to_expiry <= dte <= cfg.max_days_to_expiry):
             continue
         expiries_in_window += 1
+        rows_seen += len(df)
         if earn and today <= earn <= exp:
             skipped["expiry after earnings"] += len(df)
             continue
@@ -117,9 +119,11 @@ def select_contract(chains: dict[str, pd.DataFrame], direction: str, spot: float
         best = min(eligible, key=lambda c: c["score"])
         best.pop("score")
         return best, "ok"
-    kind = "call" if call else "put"
     if not expiries_in_window:
-        return None, f"no expiry {cfg.min_days_to_expiry}-{cfg.max_days_to_expiry} days out"
+        return None, (f"no expiry {cfg.min_days_to_expiry}-{cfg.max_days_to_expiry} days out "
+                      f"(expiries offered: {', '.join(sorted(chains)) or 'none'})")
+    if not rows_seen:
+        return None, f"Yahoo returned no {kind} quotes for the expiries in the window"
     reasons = ", ".join(f"{k} {v}" for k, v in skipped.items() if v)
     if cheapest_ok is not None:
         return None, (f"cheapest suitable {kind} costs ${cheapest_ok:,.0f} per contract; cash is ${cash:,.2f} "
@@ -151,6 +155,9 @@ def fetch_chains(ticker: str, cfg: OptionsConfig, today: date) -> dict[str, pd.D
             chain = t.option_chain(expiry)
             out["calls"][expiry] = chain.calls
             out["puts"][expiry] = chain.puts
+        elif 0 < dte <= 120:   # listed only, so a "no expiry" note can say what exists
+            out["calls"].setdefault(expiry, pd.DataFrame())
+            out["puts"].setdefault(expiry, pd.DataFrame())
     return out
 
 

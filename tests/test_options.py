@@ -218,3 +218,11 @@ def test_cheap_nasdaq_uses_weekly_cache(tmp_path, monkeypatch):
     s = load_settings()
     assert universe.cheap_nasdaq(s, log=lambda *a: None) == ["AAA"]
     assert universe.cheap_nasdaq(s, log=lambda *a: None) == ["AAA"] and len(calls) == 1
+
+
+def test_empty_quotes_and_missing_expiries_are_explained():
+    empty = {"2026-11-06": pd.DataFrame()}
+    c, note = select_contract(empty, "bearish", 20.0, cash=100, cfg=CFG, today=TODAY)
+    assert c is None and "no put quotes" in note
+    c, note = select_contract({"2026-10-02": pd.DataFrame()}, "bearish", 20.0, cash=100, cfg=CFG, today=TODAY)
+    assert c is None and "expiries offered: 2026-10-02" in note
