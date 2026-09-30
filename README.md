@@ -20,9 +20,11 @@ order placement comes later.
 
 How a run works:
 
-1. Code downloads daily prices and computes indicators and setups (free).
-2. The scanner keeps only tickers with a setup, plus open positions. None means
-   a quiet day and **no AI cost**.
+1. Code downloads daily prices for the whole universe (S&P 500 plus core ETFs,
+   about 510 tickers) and computes indicators and setups (free).
+2. The scanner keeps tickers with a fresh setup that pass the liquidity filter,
+   ranks them by 60-day strength, and sends only the top 8 (plus any open
+   positions) to the analysts. None means a quiet day and **no AI cost**.
 3. The three analysts run in parallel, each receiving one data packet and
    replying in a strict format (`desk/schemas.py`).
 4. If any analyst fails, the run stops with no decision. Otherwise the Portfolio
@@ -53,7 +55,7 @@ record to `data/runs/` (not committed).
 - **Prompts** live in `prompts/<role>/<version>.md`. To try a change, copy `v1.md`
   to `v2.md`, edit it, and set the version in `config/desk.toml`. Every run logs
   the version and a fingerprint of the exact wording, so results can be compared.
-- **Models, allowlist and risk limits** live in `config/desk.toml`.
+- **Models, universe, candidate limit and risk limits** live in `config/desk.toml`.
 
 ## Layout
 
@@ -62,7 +64,8 @@ config/desk.toml        allowlist, risk limits, model and prompt version per rol
 prompts/                versioned prompts for each team member
 desk/indicators.py      indicators and setups (breakout, pullback, VCP)
 desk/market_data.py     price, news and earnings data (yfinance)
-desk/scanner.py         picks which tickers the analysts look at
+desk/universe.py        S&P 500 list (cached weekly) plus the core list
+desk/scanner.py         ranks setups and picks which tickers the analysts see
 desk/schemas.py         report format for each team member
 desk/llm.py             one Claude call per agent, with cost tracking
 desk/team.py            runs the team, fail-safe

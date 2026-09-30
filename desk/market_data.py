@@ -41,17 +41,47 @@ def download_bars(symbols: list[str], period: str = "2y") -> dict[str, pd.DataFr
     return bars
 
 
+MARKET_OPEN, MARKET_CLOSE = (9, 30), (16, 0)
+
+
+def split_incomplete_bar(bars: dict[str, pd.DataFrame], now: datetime) -> tuple[dict[str, pd.DataFrame], dict[str, float]]:
+    """During market hours today's daily bar is still forming: drop it from the
+    indicators (its volume is partial) and report its price separately as live.
+
+    Returns (completed bars, live prices). Outside market hours nothing changes.
+    """
+    in_session = now.weekday() < 5 and MARKET_OPEN <= (now.hour, now.minute) < MARKET_CLOSE
+    if not in_session:
+        return bars, {}
+    today = now.date()
+    done: dict[str, pd.DataFrame] = {}
+    live: dict[str, float] = {}
+    for sym, df in bars.items():
+        if df.index[-1].date() == today:
+            live[sym] = round(float(df["Close"].iloc[-1]), 2)
+            df = df.iloc[:-1]
+        done[sym] = df
+    return done, live
+
+
 def mark_stale(snapshots: dict[str, dict], reference_date: str | None) -> None:
     """Flag any ticker whose last bar is older than the reference (usually SPY's) date."""
     for snap in snapshots.values():
         snap["stale"] = reference_date is None or snap["last_date"] < reference_date
 
 
-def technical_packet(bars: dict[str, pd.DataFrame], tickers: list[str], reference_date: str | None) -> dict:
+def technical_packet(bars: dict[str, pd.DataFrame], tickers: list[str], reference_date: str | None,
+                     live_prices: dict[str, float] | None = None) -> dict:
+    """Indicators use completed daily bars; `live_price` is today's price so far, if the market is open."""
     snaps = {t: snapshot(bars[t]) for t in tickers if t in bars}
     mark_stale(snaps, reference_date)
+    for t, snap in snaps.items():
+        snap["live_price"] = (live_prices or {}).get(t)
     missing = [t for t in tickers if t not in bars]
-    return {"reference_date": reference_date, "tickers": snaps, "missing_data": missing}
+    note = ("Market is open: indicators use completed daily bars through reference_date; "
+            "live_price is the current intraday price.") if live_prices else \
+           "Market is closed: indicators include the latest completed session."
+    return {"reference_date": reference_date, "session_note": note, "tickers": snaps, "missing_data": missing}
 
 
 def _news_items(ticker: yf.Ticker, limit: int = 6) -> list[dict]:

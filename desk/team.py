@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Callable
 
 import pandas as pd
@@ -16,7 +18,7 @@ from . import gatekeeper, market_data
 from .config import Settings
 from .llm import AgentResult, ClaudeRunner
 from .prompts import load_prompt
-from .scanner import pick_candidates
+from .scanner import ScanResult, pick_candidates
 from .schemas import CatalystReport, PMDecision, RegimeReport, TechnicalReport
 
 ANALYST_MAX_TOKENS = 8000
@@ -61,6 +63,7 @@ class TeamRun:
     analysts: dict[str, AgentResult] = field(default_factory=dict)
     pm: AgentResult | None = None
     gate: gatekeeper.GateResult | None = None
+    scan: ScanResult | None = None
     stopped_reason: str | None = None
     data: dict = field(default_factory=dict)
 
@@ -76,22 +79,28 @@ class TeamRun:
 def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
              bars: dict[str, pd.DataFrame],
              fetch_catalysts: Callable[[list[str]], dict] = market_data.catalyst_packet,
-             tickers: list[str] | None = None, time_et: str | None = None) -> TeamRun:
+             tickers: list[str] | None = None, time_et: str | None = None,
+             now: datetime | None = None, universe: list[str] | None = None) -> TeamRun:
     """Run the team once. `tickers` overrides the scanner (for testing prompts)."""
-    time_et = time_et or market_data.now_et()
+    now = now or datetime.now(ZoneInfo("America/New_York"))
+    time_et = time_et or now.strftime("%Y-%m-%d %H:%M")
+    bars, live = market_data.split_incomplete_bar(bars, now)
     reference = str(bars["SPY"].index[-1].date()) if "SPY" in bars else None
-    allow = list(settings.allowlist)
-    tech_all = market_data.technical_packet(bars, allow, reference)
+    allow = list(universe or settings.allowlist)
+    tech_all = market_data.technical_packet(bars, allow, reference, live)
 
     if tickers:
         outside = sorted(set(t.upper() for t in tickers) - set(allow))
         if outside:
             raise ValueError(f"not on the allowlist: {outside}")
         candidates = sorted(set(t.upper() for t in tickers) | set(account.held))
+        scan = None
     else:
-        candidates = pick_candidates(tech_all["tickers"], account.held)
+        scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
+                               settings.min_price, settings.min_dollar_volume)
+        candidates = scan.candidates
 
-    run = TeamRun(time_et=time_et, candidates=candidates)
+    run = TeamRun(time_et=time_et, candidates=candidates, scan=scan)
     if reference is None:
         run.stopped_reason = "no SPY data: cannot judge the market or data freshness"
         return run
@@ -139,7 +148,8 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         risk_per_trade=f"{risk.risk_per_trade:g}",
         max_position_pct=f"{risk.max_position_pct * 100:g}",
         max_open_positions=str(risk.max_open_positions),
-        allowlist=", ".join(allow),
+        allowlist=(f"{len(allow)} pre-approved tickers (S&P 500 and major ETFs); every ticker in the "
+                   "analyst reports is on it. Any other ticker is rejected by code."),
         daily_halt_pct=f"{risk.daily_halt_pct * 100:g}",
         min_reward_risk=f"{risk.min_reward_risk:g}",
         regime_report=run.analysts["regime_analyst"].report.model_dump(),
@@ -156,7 +166,7 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     run.gate = gatekeeper.check(
         run.pm.report, equity=account.equity, cash=account.cash, pnl_today=account.pnl_today,
         positions=account.shares_by_ticker,
-        last_prices={t: s["close"] for t, s in snaps.items() if s["close"] is not None},
+        last_prices={t: s["live_price"] or s["close"] for t, s in snaps.items() if s["close"] is not None},
         stale={t for t, s in snaps.items() if s.get("stale")},
         allowlist=set(allow), risk=risk,
         regime=run.analysts["regime_analyst"].report,

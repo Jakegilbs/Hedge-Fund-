@@ -6,7 +6,14 @@
 paper_equity = 100.0
 
 [universe]
-# Only these tickers can ever be analysed or traded.
+# The desk scans the core list below plus (if include_sp500) every S&P 500 stock.
+# Only tickers in that universe can ever be analysed or traded.
+include_sp500 = true
+# Scanning is free (code). Only the best-ranked setups go to the paid analysts.
+max_candidates = 8
+# Liquidity filter: skip thin or very cheap stocks.
+min_price = 10.0
+min_dollar_volume = 50_000_000     # 20-day average daily dollar volume
 allowlist = [
   # ETFs (10): broad market and sectors
   "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY",
@@ -45,7 +52,7 @@ portfolio_manager = "high"
 
 [prompts]
 # Prompt version per role: prompts/<role>/<version>.md
-technical_analyst = "v1"
+technical_analyst = "v2"   # v2: trend comparisons from code, intraday handling
 catalyst_analyst = "v1"
 regime_analyst = "v1"
 portfolio_manager = "v1"

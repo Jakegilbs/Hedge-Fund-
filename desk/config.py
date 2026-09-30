@@ -34,6 +34,10 @@ class Settings:
     models: dict[str, str]
     effort: dict[str, str]
     prompt_versions: dict[str, str]
+    include_sp500: bool = False
+    max_candidates: int = 8
+    min_price: float = 10.0
+    min_dollar_volume: float = 50_000_000
 
     @property
     def etfs(self) -> set[str]:
@@ -56,6 +60,10 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         models=dict(raw["models"]),
         effort=dict(raw.get("effort", {})),
         prompt_versions=dict(raw["prompts"]),
+        include_sp500=bool(raw["universe"].get("include_sp500", False)),
+        max_candidates=int(raw["universe"].get("max_candidates", 8)),
+        min_price=float(raw["universe"].get("min_price", 10.0)),
+        min_dollar_volume=float(raw["universe"].get("min_dollar_volume", 50_000_000)),
     )
 
 

@@ -92,6 +92,28 @@ def setup_vcp(df: pd.DataFrame) -> dict | None:
 SETUPS = (setup_breakout, setup_pullback, setup_vcp)
 
 
+def trend_facts(c: pd.Series) -> dict:
+    """Moving-average comparisons done in code, so analysts never have to do the arithmetic."""
+    last = float(c.iloc[-1])
+    e50 = float(ema(c, 50).iloc[-1])
+    s200 = float(sma(c, 200).iloc[-1]) if len(c) >= 200 else None
+    up_20d = len(c) > 20 and last > float(c.iloc[-21])
+    facts = {
+        "close_above_ema20": last > float(ema(c, 20).iloc[-1]),
+        "close_above_ema50": last > e50,
+        "close_above_sma200": None if s200 is None else last > s200,
+        "ema50_above_sma200": None if s200 is None else e50 > s200,
+        "up_over_20d": up_20d,
+    }
+    if s200 is not None and last > e50 > s200 and up_20d:
+        facts["trend"] = "up"
+    elif s200 is not None and last < e50 < s200:
+        facts["trend"] = "down"
+    else:
+        facts["trend"] = "sideways"
+    return facts
+
+
 def snapshot(df: pd.DataFrame) -> dict:
     """Compact technical snapshot of one ticker's daily bars (oldest first)."""
     c, v = df["Close"], df["Volume"]
@@ -105,6 +127,7 @@ def snapshot(df: pd.DataFrame) -> dict:
     a = float(atr(df).iloc[-1]) if len(df) >= 14 else float("nan")
     vol20 = float(v.rolling(20, min_periods=10).mean().iloc[-1]) if len(v) >= 10 else float("nan")
     return {
+        "trend_facts": trend_facts(c),
         "last_date": str(df.index[-1].date()),
         "close": _r(last),
         "change_pct": {"1d": change(1), "5d": change(5), "20d": change(20), "60d": change(60)},
@@ -118,6 +141,7 @@ def snapshot(df: pd.DataFrame) -> dict:
         "low_52w": _r(lo_252),
         "pct_from_52w_high": _r((last / hi_252 - 1) * 100),
         "volume_vs_20d": _r(float(v.iloc[-1]) / vol20) if vol20 else None,
+        "avg_dollar_volume_20d": _r(float((c * v).tail(20).mean()), 0),
         "last_10_closes": [_r(float(x)) for x in c.tail(10)],
         "setups": [s for s in (fn(df) for fn in SETUPS) if s],
     }

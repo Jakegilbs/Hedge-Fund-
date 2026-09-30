@@ -16,7 +16,9 @@ from pathlib import Path
 from . import market_data
 from .config import DATA_DIR, ROOT, load_env_file, load_settings
 from .llm import ClaudeRunner
+from .scanner import pick_candidates
 from .team import TeamRun, load_account, run_team
+from .universe import load_universe
 
 RUNS_DIR = DATA_DIR / "runs"
 ACCOUNT_FILE = DATA_DIR / "account.toml"
@@ -25,6 +27,12 @@ ACCOUNT_FILE = DATA_DIR / "account.toml"
 def _print_run(run: TeamRun) -> None:
     line = "=" * 72
     print(f"\n{line}\nTEAM RUN {run.time_et} ET   candidates: {', '.join(run.candidates) or 'none'}\n{line}")
+    if run.scan:
+        sc = run.scan
+        print(f"Scanner: {sc.scanned} tickers checked, {len(sc.with_setups)} with a setup"
+              f"{', ' + str(len(sc.filtered_illiquid)) + ' too illiquid' if sc.filtered_illiquid else ''}.")
+        if sc.cut_by_limit:
+            print(f"Not sent (ranked below the top {len(run.candidates)}): {', '.join(sc.cut_by_limit)}")
     for role, a in run.analysts.items():
         head = f"\n--- {role.replace('_', ' ').title()}  [{a.model_served or a.model_requested}, prompt {a.prompt_version}, ${a.cost_usd:.4f}]"
         print(head)
@@ -98,21 +106,25 @@ def main() -> None:
           f"positions: {', '.join(account.held) or 'none'}")
     tickers = [t.strip() for t in args.tickers.split(",")] if args.tickers else None
 
-    symbols = sorted(set(settings.allowlist) | set(settings.regime_symbols) | set(settings.sector_etfs))
-    print(f"Downloading daily bars for {len(symbols)} symbols...")
+    universe = load_universe(settings)
+    symbols = sorted(set(universe) | set(settings.regime_symbols) | set(settings.sector_etfs))
+    print(f"Universe: {len(universe)} tradeable tickers. Downloading daily bars for {len(symbols)} symbols "
+          f"(about a minute)...")
     bars = market_data.download_bars(symbols)
 
     if args.data_only:
         ref = str(bars["SPY"].index[-1].date()) if "SPY" in bars else None
-        tech = market_data.technical_packet(bars, list(settings.allowlist), ref)
-        with_setups = [t for t, s in tech["tickers"].items() if s["setups"]]
-        print(json.dumps({"technical": tech, "regime": market_data.regime_packet(
-            bars, list(settings.regime_symbols), list(settings.sector_etfs), list(settings.allowlist))},
-            indent=1, default=str))
-        print(f"\nTickers with a setup today: {with_setups or 'none'}")
+        tech = market_data.technical_packet(bars, universe, ref)
+        scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
+                               settings.min_price, settings.min_dollar_volume)
+        print(json.dumps(market_data.regime_packet(
+            bars, list(settings.regime_symbols), list(settings.sector_etfs), universe), indent=1, default=str))
+        print(f"\nScanned {scan.scanned} tickers. Setups today ({len(scan.with_setups)}): "
+              f"{', '.join(scan.with_setups) or 'none'}")
+        print(f"Would send to the analysts: {', '.join(scan.candidates) or 'none (quiet day)'}")
         return
 
-    run = run_team(settings, ClaudeRunner(), account, bars, tickers=tickers)
+    run = run_team(settings, ClaudeRunner(), account, bars, tickers=tickers, universe=universe)
     _print_run(run)
     if run.analysts:
         print(f"Saved: {_save(run).relative_to(ROOT)}")
