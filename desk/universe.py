@@ -38,4 +38,6 @@ def load_universe(settings: Settings) -> list[str]:
     symbols = set(settings.allowlist)
     if settings.include_sp500:
         symbols |= set(sp500_symbols())
+    if settings.instrument == "options":
+        symbols |= set(settings.options_extra)
     return sorted(symbols)

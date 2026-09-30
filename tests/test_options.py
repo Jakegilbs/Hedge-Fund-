@@ -169,3 +169,13 @@ def test_scanner_skips_tickers_whose_options_are_unaffordable():
     ok = lambda s: estimated_atm_cost(s["close"], s["atr_pct"]) <= 100
     scan = pick_candidates(snaps, held=[], affordable=ok)
     assert scan.candidates == ["CHEAP"] and scan.filtered_unaffordable == ["PRICEY"]
+
+
+def test_options_universe_adds_cheap_names_and_lower_price_floor(monkeypatch):
+    from dataclasses import replace
+    from desk import universe
+    monkeypatch.setattr(universe, "sp500_symbols", lambda: ["AAPL"])
+    s = load_settings()
+    assert "SOFI" in universe.load_universe(s) and s.scan_min_price == 5.0
+    stock = replace(s, instrument="stock")
+    assert "SOFI" not in universe.load_universe(stock) and stock.scan_min_price == stock.min_price

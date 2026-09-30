@@ -47,7 +47,13 @@ class Settings:
     min_price: float = 10.0
     min_dollar_volume: float = 50_000_000
     instrument: str = "stock"            # "stock" or "options" (long calls and puts only)
+    options_extra: tuple[str, ...] = ()
+    options_min_price: float = 5.0
     options: "OptionsConfig" = None      # set by load_settings
+
+    @property
+    def scan_min_price(self) -> float:
+        return self.options_min_price if self.instrument == "options" else self.min_price
 
     @property
     def etfs(self) -> set[str]:
@@ -79,6 +85,8 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         min_price=float(raw["universe"].get("min_price", 10.0)),
         min_dollar_volume=float(raw["universe"].get("min_dollar_volume", 50_000_000)),
         instrument=str(raw.get("strategy", {}).get("instrument", "stock")),
+        options_extra=tuple(t.upper() for t in raw["universe"].get("options_extra", [])),
+        options_min_price=float(raw["universe"].get("options_min_price", 5.0)),
         options=OptionsConfig(**raw.get("options", {})),
     )
 

@@ -44,6 +44,14 @@ allowlist = [
   "XOM", "CVX", "CAT",
   "WMT", "COST", "HD", "MCD", "PG", "KO", "PEP",
 ]
+# Options mode only: heavily traded, optionable stocks outside the S&P 500 that are
+# cheap enough for a small account's options. Still subject to every filter.
+options_extra = [
+  "SOFI", "HOOD", "RIVN", "LCID", "NIO", "SNAP", "AAL", "PLUG", "RKLB", "MARA",
+  "RIOT", "CLSK", "SOUN", "AFRM", "NU", "GRAB", "LYFT", "PATH", "IONQ", "JOBY",
+  "ACHR", "OPEN", "RUN", "BBAI", "PINS", "DKNG",
+]
+options_min_price = 5.0            # replaces min_price in options mode
 # Used by the Market Regime Analyst only (never traded).
 regime_symbols = ["SPY", "QQQ", "IWM", "^VIX", "^TNX", "TLT"]
 sector_etfs = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC"]

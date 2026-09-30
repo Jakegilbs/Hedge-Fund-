@@ -142,7 +142,7 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     else:
         directions = ("bullish", "bearish") if settings.instrument == "options" else ("bullish",)
         scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
-                               settings.min_price, settings.min_dollar_volume, directions=directions,
+                               settings.scan_min_price, settings.min_dollar_volume, directions=directions,
                                affordable=options_affordable(settings, account.cash))
         candidates = scan.candidates
 

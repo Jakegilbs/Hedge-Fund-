@@ -155,7 +155,7 @@ def main() -> None:
         ref = str(done["SPY"].index[-1].date()) if "SPY" in done else None
         tech = market_data.technical_packet(done, universe, ref, live)
         scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
-                               settings.min_price, settings.min_dollar_volume,
+                               settings.scan_min_price, settings.min_dollar_volume,
                                directions=("bullish", "bearish") if settings.instrument == "options"
                                else ("bullish",),
                                affordable=options_affordable(settings, account.cash))
