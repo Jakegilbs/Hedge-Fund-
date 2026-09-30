@@ -38,8 +38,8 @@ risk_per_trade = 1.0          # 1.0 = size is not limited by risk; the stop cap 
 max_position_pct = 1.0        # 100% of equity in one position
 max_open_positions = 1
 max_stop_distance_pct = 0.10  # stop at most 10% below entry: a stop-out loses at most ~10%
-min_conviction = 4            # the PM's conviction (1-5) must be at least this to trade
-min_reward_risk = 2.0
+min_conviction = 3            # the PM's conviction (1-5) must be at least this to trade
+min_reward_risk = 1.5         # (target - entry) / (entry - stop)
 daily_halt_pct = -0.03        # no new entries after -3% on the day
 weekly_halt_pct = -0.10
 max_drawdown_pct = -0.30      # everything stops 30% below the account's peak
@@ -57,7 +57,7 @@ portfolio_manager = "high"
 
 [prompts]
 # Prompt version per role: prompts/<role>/<version>.md
-technical_analyst = "v3"   # v3: bolder ATR/measured-move targets, levels for every name
+technical_analyst = "v4"   # v4: reward-to-risk minimum comes from config
 catalyst_analyst = "v1"
 regime_analyst = "v1"
-portfolio_manager = "v2"   # v2: one all-in, high-conviction position
+portfolio_manager = "v3"   # v3: all-in, conviction 3 acceptable

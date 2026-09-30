@@ -4,7 +4,7 @@ An AI analyst team that swing-trades (2–15 day holds) a small Robinhood Agenti
 account. Three analysts research, a portfolio manager picks the single best
 high-conviction trade, and code (not AI) sizes it with all available cash and
 enforces every limit: one position at a time, stop within 10% of entry,
-conviction 4+/5, reward-to-risk 2+.
+conviction 3+/5, reward-to-risk 1.5+.
 
 **Status: Level 1 (you approve and place every trade).** The analyst team runs
 on real market data, the Gatekeeper checks and sizes every order, and you place

@@ -115,7 +115,7 @@ def test_sell_of_unheld_ticker_rejected():
 # ---------- all-in, high-conviction style (the current config) ----------
 
 def test_config_is_all_in():
-    assert ALL_IN.all_in and ALL_IN.max_open_positions == 1 and ALL_IN.min_conviction >= 4
+    assert ALL_IN.all_in and ALL_IN.max_open_positions == 1 and ALL_IN.min_conviction >= 3
 
 
 def test_all_in_uses_all_cash_on_the_single_best_trade():
@@ -127,8 +127,8 @@ def test_all_in_uses_all_cash_on_the_single_best_trade():
 
 
 def test_all_in_rejects_low_conviction():
-    g = run(decide(buy(conviction=3)), risk=ALL_IN)
-    assert not g.approved and "conviction 3/5" in " ".join(g.rejected[0].reasons)
+    g = run(decide(buy(conviction=2)), risk=ALL_IN)
+    assert not g.approved and "conviction 2/5" in " ".join(g.rejected[0].reasons)
 
 
 def test_all_in_rejects_wide_stop():

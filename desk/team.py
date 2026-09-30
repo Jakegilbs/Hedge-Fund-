@@ -146,7 +146,8 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     run.data = {"technical": tech, "regime": regime, "news": news}
 
     jobs = {
-        "technical_analyst": (TechnicalReport, {"technical_data": tech}),
+        "technical_analyst": (TechnicalReport, {"technical_data": tech,
+                                                "min_reward_risk": f"{settings.risk.min_reward_risk:g}"}),
         "catalyst_analyst": (CatalystReport, {"news_data": news, "today": news.get("today", time_et[:10])}),
         "regime_analyst": (RegimeReport, {"regime_data": regime}),
     }
