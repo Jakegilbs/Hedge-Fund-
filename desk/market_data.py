@@ -9,6 +9,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import logging
+import time
 
 import pandas as pd
 import yfinance as yf
@@ -25,10 +26,7 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
 
-def download_bars(symbols: list[str], period: str = "2y") -> dict[str, pd.DataFrame]:
-    """Daily OHLCV bars per symbol, oldest first. Symbols with no data are omitted."""
-    raw = yf.download(symbols, period=period, interval="1d", auto_adjust=True,
-                      group_by="ticker", progress=False, threads=True)
+def _extract(raw: pd.DataFrame, symbols: list[str]) -> dict[str, pd.DataFrame]:
     bars: dict[str, pd.DataFrame] = {}
     for sym in symbols:
         try:
@@ -38,6 +36,31 @@ def download_bars(symbols: list[str], period: str = "2y") -> dict[str, pd.DataFr
         df = df[[c for c in OHLCV if c in df.columns]].dropna()
         if len(df) >= 30:
             bars[sym] = df
+    return bars
+
+
+def download_bars(symbols: list[str], period: str = "2y", batch: int = 100,
+                  pause: float = 1.0) -> dict[str, pd.DataFrame]:
+    """Daily OHLCV bars per symbol, oldest first. Symbols with no data are omitted.
+
+    Downloads in batches (one big request gets throttled by Yahoo), then retries
+    whatever came back empty once.
+    """
+    def fetch(syms: list[str]) -> dict[str, pd.DataFrame]:
+        raw = yf.download(syms, period=period, interval="1d", auto_adjust=True,
+                          group_by="ticker", progress=False, threads=True)
+        return _extract(raw, syms)
+
+    bars: dict[str, pd.DataFrame] = {}
+    for i in range(0, len(symbols), batch):
+        bars.update(fetch(symbols[i:i + batch]))
+        time.sleep(pause)
+    missing = [s for s in symbols if s not in bars]
+    if missing:
+        time.sleep(pause * 3)
+        for i in range(0, len(missing), batch // 2):
+            bars.update(fetch(missing[i:i + batch // 2]))
+            time.sleep(pause)
     return bars
 
 

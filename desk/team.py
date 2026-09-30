@@ -108,7 +108,9 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         run.stopped_reason = "quiet day: no setups and no open positions (no AI cost)"
         return run
 
-    tech = {**tech_all, "tickers": {t: tech_all["tickers"][t] for t in candidates if t in tech_all["tickers"]},
+    why = scan.why if scan else {t: "requested by you" for t in candidates}
+    tech = {**tech_all, "tickers": {t: {"why_selected": why.get(t, ""), **tech_all["tickers"][t]}
+                                    for t in candidates if t in tech_all["tickers"]},
             "missing_data": [t for t in candidates if t not in tech_all["tickers"]]}
     regime = market_data.regime_packet(bars, list(settings.regime_symbols), list(settings.sector_etfs), allow)
     news = fetch_catalysts(candidates, frozenset(settings.etfs))

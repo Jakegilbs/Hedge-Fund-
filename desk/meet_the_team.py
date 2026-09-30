@@ -11,6 +11,7 @@ import json
 import os
 from dataclasses import asdict
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from . import market_data
@@ -28,11 +29,7 @@ def _print_run(run: TeamRun) -> None:
     line = "=" * 72
     print(f"\n{line}\nTEAM RUN {run.time_et} ET   candidates: {', '.join(run.candidates) or 'none'}\n{line}")
     if run.scan:
-        sc = run.scan
-        print(f"Scanner: {sc.scanned} tickers checked, {len(sc.with_setups)} with a setup"
-              f"{', ' + str(len(sc.filtered_illiquid)) + ' too illiquid' if sc.filtered_illiquid else ''}.")
-        if sc.cut_by_limit:
-            print(f"Not sent (ranked below the top {len(run.candidates)}): {', '.join(sc.cut_by_limit)}")
+        _print_scan(run.scan)
     for role, a in run.analysts.items():
         head = f"\n--- {role.replace('_', ' ').title()}  [{a.model_served or a.model_requested}, prompt {a.prompt_version}, ${a.cost_usd:.4f}]"
         print(head)
@@ -46,6 +43,20 @@ def _print_run(run: TeamRun) -> None:
     if run.stopped_reason:
         print(f"\nSTOPPED: {run.stopped_reason}")
     print(f"\nTotal AI cost this run: ${run.total_cost_usd:.4f}")
+
+
+def _print_scan(sc, universe_size: int | None = None, downloaded: int | None = None) -> None:
+    print("\n--- Scanner (code, free)")
+    if universe_size is not None:
+        print(f"Universe {universe_size} tickers, price data for {downloaded}"
+              f" ({universe_size - downloaded} missing)")
+    counts = ", ".join(f"{k} {v}" for k, v in sorted(sc.setup_counts.items())) or "none"
+    print(f"Checked {sc.scanned} | stale {len(sc.stale)} | with a setup {len(sc.with_setups)} ({counts})"
+          f" | too illiquid {len(sc.filtered_illiquid)}")
+    for t in sc.candidates:
+        print(f"  -> {t}: {sc.why.get(t, '')}")
+    if sc.cut_by_limit:
+        print(f"Setups not sent (ranked below the top slots): {', '.join(sc.cut_by_limit)}")
 
 
 def _print_gate(gate) -> None:
@@ -113,17 +124,20 @@ def main() -> None:
     bars = market_data.download_bars(symbols)
 
     if args.data_only:
-        ref = str(bars["SPY"].index[-1].date()) if "SPY" in bars else None
-        tech = market_data.technical_packet(bars, universe, ref)
+        done, live = market_data.split_incomplete_bar(bars, datetime.now(ZoneInfo("America/New_York")))
+        ref = str(done["SPY"].index[-1].date()) if "SPY" in done else None
+        tech = market_data.technical_packet(done, universe, ref, live)
         scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
                                settings.min_price, settings.min_dollar_volume)
         print(json.dumps(market_data.regime_packet(
             bars, list(settings.regime_symbols), list(settings.sector_etfs), universe), indent=1, default=str))
-        print(f"\nScanned {scan.scanned} tickers. Setups today ({len(scan.with_setups)}): "
-              f"{', '.join(scan.with_setups) or 'none'}")
-        print(f"Would send to the analysts: {', '.join(scan.candidates) or 'none (quiet day)'}")
+        _print_scan(scan, len(universe), sum(1 for t in universe if t in bars))
+        if len(bars) < len(symbols) * 0.9:
+            print("\nWARNING: more than 10% of symbols have no data. Yahoo may be throttling;"
+                  " wait a few minutes and run again.")
         return
 
+    print(f"Price data for {sum(1 for t in universe if t in bars)} of {len(universe)} tickers.")
     run = run_team(settings, ClaudeRunner(), account, bars, tickers=tickers, universe=universe)
     _print_run(run)
     if run.analysts:

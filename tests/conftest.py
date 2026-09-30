@@ -27,5 +27,7 @@ def make_breakout(n: int = 300) -> pd.DataFrame:
 
 @pytest.fixture
 def bars():
-    return {"SPY": make_bars(seed=2), "QQQ": make_bars(seed=3), "AAPL": make_bars(seed=4),
+    # Only NVDA is a candidate: the others drift down, so they are neither setups nor leaders.
+    return {"SPY": make_bars(drift=-0.001, seed=2), "QQQ": make_bars(drift=-0.001, seed=3),
+            "AAPL": make_bars(drift=-0.002, seed=4),
             "NVDA": make_breakout(), "^VIX": make_bars(start=15, drift=0, seed=5)}

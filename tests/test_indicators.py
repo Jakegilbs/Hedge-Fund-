@@ -41,9 +41,10 @@ def test_held_positions_always_reviewed():
     assert pick_candidates(packet["tickers"], held=["AAPL"]).candidates == ["AAPL"]
 
 
-def _snap(chg60, price=100.0, dollar_vol=1e9, setups=1):
+def _snap(chg60, price=100.0, dollar_vol=1e9, setups=1, trend="up", from_high=-1.0):
     return {"setups": [{"setup": "breakout"}] * setups, "stale": False, "close": price,
-            "avg_dollar_volume_20d": dollar_vol, "change_pct": {"60d": chg60}}
+            "avg_dollar_volume_20d": dollar_vol, "change_pct": {"60d": chg60},
+            "trend_facts": {"trend": trend}, "pct_from_52w_high": from_high}
 
 
 def test_scanner_ranks_by_strength_and_caps_the_list():
@@ -76,3 +77,17 @@ def test_incomplete_bar_dropped_during_market_hours():
     assert str(done["SPY"].index[-1].date()) == "2026-09-29" and "SPY" in live
     done, live = split_incomplete_bar(bars, datetime(2026, 9, 30, 16, 30, tzinfo=et))
     assert str(done["SPY"].index[-1].date()) == "2026-09-30" and live == {}
+
+
+def test_leaders_fill_empty_slots_when_few_setups():
+    snaps = {"SET": _snap(5), "LEAD1": _snap(30, setups=0), "LEAD2": _snap(20, setups=0),
+             "FAR": _snap(40, setups=0, from_high=-12), "DOWN": _snap(50, setups=0, trend="down")}
+    scan = pick_candidates(snaps, held=[], max_candidates=3)
+    assert scan.candidates == ["LEAD1", "LEAD2", "SET"]
+    assert scan.why["SET"].startswith("coded setup") and scan.why["LEAD1"].startswith("leader")
+    assert scan.setup_counts == {"breakout": 1}
+
+
+def test_zero_setups_still_sends_leaders():
+    snaps = {f"L{i}": _snap(i, setups=0) for i in range(10)}
+    assert len(pick_candidates(snaps, held=[], max_candidates=8).candidates) == 8
