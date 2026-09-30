@@ -26,7 +26,7 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
 
-def _extract(raw: pd.DataFrame, symbols: list[str]) -> dict[str, pd.DataFrame]:
+def _extract(raw: pd.DataFrame, symbols: list[str], min_rows: int = 30) -> dict[str, pd.DataFrame]:
     bars: dict[str, pd.DataFrame] = {}
     for sym in symbols:
         try:
@@ -34,33 +34,88 @@ def _extract(raw: pd.DataFrame, symbols: list[str]) -> dict[str, pd.DataFrame]:
         except KeyError:
             continue
         df = df[[c for c in OHLCV if c in df.columns]].dropna()
-        if len(df) >= 30:
+        if len(df) >= min_rows and list(df.columns) == OHLCV:
+            df.index = pd.to_datetime(df.index).tz_localize(None) if getattr(df.index, "tz", None) else df.index
             bars[sym] = df
     return bars
 
 
-def download_bars(symbols: list[str], period: str = "2y", batch: int = 100,
-                  pause: float = 1.0) -> dict[str, pd.DataFrame]:
-    """Daily OHLCV bars per symbol, oldest first. Symbols with no data are omitted.
+BAR_CACHE = DATA_DIR / "cache" / "bars"
+FRESH_SECONDS = 20 * 60        # a re-run within 20 minutes downloads nothing
 
-    Downloads in batches (one big request gets throttled by Yahoo), then retries
-    whatever came back empty once.
+
+def _cache_path(sym: str):
+    return BAR_CACHE / f"{sym.replace('^', '_')}.csv"
+
+
+def _load_cached(sym: str) -> pd.DataFrame | None:
+    p = _cache_path(sym)
+    if not p.is_file():
+        return None
+    try:
+        df = pd.read_csv(p, index_col=0, parse_dates=True)
+        return df[OHLCV] if len(df) >= 30 else None
+    except Exception:
+        return None
+
+
+def _save_cached(sym: str, df: pd.DataFrame) -> None:
+    BAR_CACHE.mkdir(parents=True, exist_ok=True)
+    df.to_csv(_cache_path(sym), date_format="%Y-%m-%d")
+
+
+def download_bars(symbols: list[str], period: str = "2y", batch: int = 40, pause: float = 2.0,
+                  priority: list[str] | None = None, log=print) -> dict[str, pd.DataFrame]:
+    """Daily OHLCV bars per symbol, oldest first, cached in data/cache/bars/.
+
+    Yahoo throttles large bursts, so this downloads gently: priority symbols
+    first (market context), then small sequential batches with pauses; symbols
+    with a cache only fetch the last month; symbols cached in the last 20
+    minutes are not downloaded at all; failures fall back to the cached copy.
     """
-    def fetch(syms: list[str]) -> dict[str, pd.DataFrame]:
-        raw = yf.download(syms, period=period, interval="1d", auto_adjust=True,
-                          group_by="ticker", progress=False, threads=True)
-        return _extract(raw, syms)
-
+    order = list(dict.fromkeys([*(priority or []), *symbols]))
     bars: dict[str, pd.DataFrame] = {}
-    for i in range(0, len(symbols), batch):
-        bars.update(fetch(symbols[i:i + batch]))
-        time.sleep(pause)
-    missing = [s for s in symbols if s not in bars]
-    if missing:
-        time.sleep(pause * 3)
-        for i in range(0, len(missing), batch // 2):
-            bars.update(fetch(missing[i:i + batch // 2]))
-            time.sleep(pause)
+    need_full, need_recent = [], []
+    for sym in order:
+        cached = _load_cached(sym)
+        if cached is not None and time.time() - _cache_path(sym).stat().st_mtime < FRESH_SECONDS:
+            bars[sym] = cached
+        elif cached is not None:
+            bars[sym] = cached              # fallback if the update fails
+            need_recent.append(sym)
+        else:
+            need_full.append(sym)
+
+    def fetch(syms: list[str], per: str) -> dict[str, pd.DataFrame]:
+        try:
+            raw = yf.download(syms, period=per, interval="1d", auto_adjust=True,
+                              group_by="ticker", progress=False, threads=False)
+        except Exception:
+            return {}
+        return _extract(raw, syms, min_rows=1)
+
+    jobs = [(need_recent, "1mo"), (need_full, period)]
+    total = len(need_recent) + len(need_full)
+    if total:
+        log(f"Downloading {total} symbols ({len(bars) - len(need_recent)} already fresh in cache)...")
+    done = 0
+    for syms, per in jobs:
+        for i in range(0, len(syms), batch):
+            chunk = syms[i:i + batch]
+            got = fetch(chunk, per)
+            for sym, df in got.items():
+                if per == "1mo" and sym in bars:
+                    df = pd.concat([bars[sym], df])
+                    df = df[~df.index.duplicated(keep="last")].sort_index()
+                if len(df) >= 30:
+                    bars[sym] = df
+                    _save_cached(sym, df)
+            done += len(chunk)
+            if len(got) < len(chunk) * 0.5:
+                log(f"  Yahoo returned {len(got)}/{len(chunk)}; slowing down...")
+                time.sleep(pause * 5)
+            else:
+                time.sleep(pause)
     return bars
 
 

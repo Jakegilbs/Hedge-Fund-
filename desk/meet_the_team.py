@@ -121,7 +121,8 @@ def main() -> None:
     symbols = sorted(set(universe) | set(settings.regime_symbols) | set(settings.sector_etfs))
     print(f"Universe: {len(universe)} tradeable tickers. Downloading daily bars for {len(symbols)} symbols "
           f"(about a minute)...")
-    bars = market_data.download_bars(symbols)
+    bars = market_data.download_bars(symbols, priority=[*settings.regime_symbols, *settings.sector_etfs,
+                                                        *settings.allowlist])
 
     if args.data_only:
         done, live = market_data.split_incomplete_bar(bars, datetime.now(ZoneInfo("America/New_York")))
@@ -133,8 +134,9 @@ def main() -> None:
             bars, list(settings.regime_symbols), list(settings.sector_etfs), universe), indent=1, default=str))
         _print_scan(scan, len(universe), sum(1 for t in universe if t in bars))
         if len(bars) < len(symbols) * 0.9:
-            print("\nWARNING: more than 10% of symbols have no data. Yahoo may be throttling;"
-                  " wait a few minutes and run again.")
+            print("\nWARNING: more than 10% of symbols have no data. Yahoo is throttling this"
+                  " computer: wait 15-30 minutes and run again. Downloaded prices are cached, so"
+                  " each retry only fetches what is still missing.")
         return
 
     print(f"Price data for {sum(1 for t in universe if t in bars)} of {len(universe)} tickers.")
