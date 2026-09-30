@@ -91,3 +91,19 @@ def test_leaders_fill_empty_slots_when_few_setups():
 def test_zero_setups_still_sends_leaders():
     snaps = {f"L{i}": _snap(i, setups=0) for i in range(10)}
     assert len(pick_candidates(snaps, held=[], max_candidates=8).candidates) == 8
+
+
+def test_overextended_and_pinned_are_skipped():
+    snaps = {"HOT": {**_snap(80), "rsi14": 85.0}, "PARA": {**_snap(80), "change_pct": {"20d": 45.0, "60d": 80}},
+             "PINNED": {**_snap(10), "atr_pct": 0.3}, "OK": {**_snap(5), "rsi14": 60.0, "atr_pct": 2.0}}
+    scan = pick_candidates(snaps, held=[])
+    assert scan.candidates == ["OK"]
+    assert sorted(scan.filtered_extended) == ["HOT", "PARA"] and scan.filtered_pinned == ["PINNED"]
+
+
+def test_ranking_is_relative_to_spy():
+    spy = {**_snap(10, setups=0, trend="down"), "change_pct": {"20d": 5.0, "60d": 10.0}}
+    steady = {**_snap(0), "change_pct": {"20d": 8.0, "60d": 18.0}}     # +3 / +8 vs SPY
+    laggard = {**_snap(0), "change_pct": {"20d": 1.0, "60d": 12.0}}    # -4 / +2 vs SPY
+    scan = pick_candidates({"SPY": spy, "STEADY": steady, "LAG": laggard}, held=[], max_candidates=1)
+    assert scan.candidates == ["STEADY"]

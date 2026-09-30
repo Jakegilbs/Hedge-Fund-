@@ -10,7 +10,7 @@ paper_equity = 100.0
 # Only tickers in that universe can ever be analysed or traded.
 include_sp500 = true
 # Scanning is free (code). Only the best-ranked setups go to the paid analysts.
-max_candidates = 8
+max_candidates = 5
 # Liquidity filter: skip thin or very cheap stocks.
 min_price = 10.0
 min_dollar_volume = 50_000_000     # 20-day average daily dollar volume

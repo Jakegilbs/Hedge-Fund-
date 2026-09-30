@@ -53,6 +53,9 @@ def _print_scan(sc, universe_size: int | None = None, downloaded: int | None = N
     counts = ", ".join(f"{k} {v}" for k, v in sorted(sc.setup_counts.items())) or "none"
     print(f"Checked {sc.scanned} | stale {len(sc.stale)} | with a setup {len(sc.with_setups)} ({counts})"
           f" | too illiquid {len(sc.filtered_illiquid)}")
+    if sc.filtered_extended or sc.filtered_pinned:
+        print(f"Skipped as overextended: {', '.join(sorted(sc.filtered_extended)) or 'none'}"
+              f" | pinned (too quiet): {', '.join(sorted(sc.filtered_pinned)) or 'none'}")
     for t in sc.candidates:
         print(f"  -> {t}: {sc.why.get(t, '')}")
     if sc.cut_by_limit:

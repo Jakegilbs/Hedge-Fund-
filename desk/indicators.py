@@ -57,14 +57,14 @@ def setup_breakout(df: pd.DataFrame) -> dict | None:
 
 
 def setup_pullback(df: pd.DataFrame) -> dict | None:
-    """Uptrend (close > EMA50 > SMA200) pulling back to within 1% of EMA20 and reclaiming."""
+    """Uptrend (close > EMA50 > SMA200) pulled back to within 2% of EMA20 and turning up."""
     if len(df) < 220:
         return None
     c, h, l = df["Close"], df["High"], df["Low"]
     e20, e50, s200 = ema(c, 20), ema(c, 50), sma(c, 200)
     uptrend = c.iloc[-1] > e50.iloc[-1] > s200.iloc[-1]
-    near20 = abs(c.iloc[-1] - e20.iloc[-1]) / e20.iloc[-1] < 0.01
-    reclaim = c.iloc[-1] > h.iloc[-2]
+    near20 = abs(c.iloc[-1] - e20.iloc[-1]) / e20.iloc[-1] < 0.02
+    reclaim = c.iloc[-1] > c.iloc[-2]
     if not (uptrend and near20 and reclaim):
         return None
     a = float(atr(df).iloc[-1])
@@ -81,7 +81,7 @@ def setup_vcp(df: pd.DataFrame) -> dict | None:
     atrp = atr(df) / c
     atrp_rank = float((atrp / atrp.rolling(120, min_periods=60).max()).iloc[-1])
     near_high = float(c.iloc[-1] / c.rolling(100, min_periods=60).max().iloc[-1])
-    if not (atrp_rank < 0.35 and near_high > 0.95):
+    if not (atrp_rank < 0.45 and near_high > 0.95):
         return None
     a = float(atr(df).iloc[-1])
     pivot = float(h.rolling(20).max().iloc[-1])

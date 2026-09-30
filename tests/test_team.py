@@ -126,3 +126,23 @@ def test_account_file_or_paper(tmp_path):
     f.write_text('equity = 101.5\ncash = 86.5\n[[positions]]\nticker = "nvda"\nshares = 0.15\n')
     acct = load_account(f, 100)
     assert acct.cash == 86.5 and acct.shares_by_ticker == {"NVDA": 0.15}
+
+
+def test_pm_skipped_when_no_technical_candidate(bars, monkeypatch):
+    watch_only = REPORTS[TechnicalReport].model_copy(deep=True)
+    watch_only.views[0].recommendation = "watch"
+    monkeypatch.setitem(REPORTS, TechnicalReport, watch_only)
+    runner, msgs = fake_runner()
+    run = run_team(load_settings(), runner, AccountState(100, 100), bars, fetch_catalysts=no_news)
+    assert run.pm is None and "Portfolio Manager was skipped" in run.stopped_reason
+    assert len(msgs.calls) == 3          # three analysts, no PM call
+
+
+def test_pm_still_runs_for_open_positions(bars, monkeypatch):
+    watch_only = REPORTS[TechnicalReport].model_copy(deep=True)
+    watch_only.views[0].recommendation = "watch"
+    monkeypatch.setitem(REPORTS, TechnicalReport, watch_only)
+    runner, _ = fake_runner()
+    held = AccountState(100, 0, positions=[{"ticker": "AAPL", "shares": 0.5}])
+    run = run_team(load_settings(), runner, held, bars, fetch_catalysts=no_news)
+    assert run.pm is not None

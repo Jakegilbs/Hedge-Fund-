@@ -9,18 +9,18 @@ def make_bars(n: int = 300, start: float = 100.0, drift: float = 0.001, seed: in
     rng = np.random.default_rng(seed)
     close = start * np.cumprod(1 + drift + rng.normal(0, 0.01, n))
     idx = pd.bdate_range(end=end, periods=n)
-    high = close * (1 + rng.uniform(0.001, 0.01, n))
-    low = close * (1 - rng.uniform(0.001, 0.01, n))
+    high = close * (1 + rng.uniform(0.004, 0.015, n))
+    low = close * (1 - rng.uniform(0.004, 0.015, n))
     return pd.DataFrame({"Open": close, "High": high, "Low": low, "Close": close,
                          "Volume": rng.integers(1_000_000, 2_000_000, n).astype(float)}, index=idx)
 
 
 def make_breakout(n: int = 300) -> pd.DataFrame:
-    """Flat base, then the last bar closes at a new high on double volume."""
-    df = make_bars(n, drift=0.0, seed=1)
-    base_high = df["Close"].iloc[:-1].max()
-    df.iloc[-1, df.columns.get_loc("Close")] = base_high * 1.03
-    df.iloc[-1, df.columns.get_loc("High")] = base_high * 1.04
+    """Steady uptrend, then the last bar closes 1% above the prior closing high on double volume."""
+    df = make_bars(n, drift=0.0008, seed=11)
+    prior_high = df["Close"].iloc[:-1].max()
+    df.iloc[-1, df.columns.get_loc("Close")] = prior_high * 1.01
+    df.iloc[-1, df.columns.get_loc("High")] = prior_high * 1.015
     df.iloc[-1, df.columns.get_loc("Volume")] = df["Volume"].iloc[-21:-1].mean() * 2.0
     return df
 

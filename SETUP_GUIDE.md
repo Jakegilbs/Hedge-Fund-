@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **49 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **53 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only

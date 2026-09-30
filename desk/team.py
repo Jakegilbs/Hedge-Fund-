@@ -137,6 +137,13 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
         run.stopped_reason = "analyst report missing, PM not called: " + "; ".join(failed)
         return run
 
+    tradeable = [v.ticker for v in run.analysts["technical_analyst"].report.views
+                 if v.recommendation == "candidate" and v.data_ok]
+    if not tradeable and not account.held:
+        run.stopped_reason = ("no trade possible: the Technical Analyst rated nothing a 'candidate' and "
+                              "nothing is held, so the Portfolio Manager was skipped (no PM cost)")
+        return run
+
     risk = settings.risk
     pm_prompt = load_prompt("portfolio_manager", settings.prompt_versions["portfolio_manager"])
     rendered = pm_prompt.render(

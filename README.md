@@ -25,7 +25,7 @@ How a run works:
 1. Code downloads daily prices for the whole universe (S&P 500 plus core ETFs,
    about 510 tickers) and computes indicators and setups (free).
 2. The scanner keeps tickers with a fresh setup that pass the liquidity filter,
-   ranks them by 60-day strength, and sends only the top 8 (plus any open
+   ranks them by strength relative to SPY, and sends only the top 5 (plus any open
    positions) to the analysts. None means a quiet day and **no AI cost**.
 3. The three analysts run in parallel, each receiving one data packet and
    replying in a strict format (`desk/schemas.py`).
