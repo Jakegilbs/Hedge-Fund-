@@ -97,6 +97,8 @@ desk/membership.py      historical S&P 500 membership, so backtests only rank st
 desk/earnings.py        earnings history (Yahoo, cached) and the positive earnings-drift flag
 desk/earnings_study.py  earnings event study: surprise, reaction, and the next 5/20/60 days vs SPY
 desk/free_hand.py       free-hand fund: the AI researches and decides the whole portfolio; code keeps score vs SPY
+desk/insiders.py        open-market insider purchases from the SEC's quarterly Form 4 data sets (cached)
+desk/insider_study.py   insider buying study: clusters, size, who bought; 20/60/120 days vs SPY or IWM
 tests/                  offline tests with a fake Claude client
 ```
 

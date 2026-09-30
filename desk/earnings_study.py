@@ -95,20 +95,20 @@ def summarize(ev: pd.DataFrame, h: int) -> dict:
             "t": x.mean() / (sd / math.sqrt(n)) if n > 1 and sd > 0 else np.nan}
 
 
-def table(ev: pd.DataFrame, by: pd.Series, title: str, order: list[str]) -> list[str]:
+def table(ev: pd.DataFrame, by: pd.Series, title: str, order: list[str], horizons=HORIZONS) -> list[str]:
     lines = ["", f"--- {title}",
-             f"{'group':<26}{'reports':>8}" + "".join(f"{f'{h}d excess':>12}{'beat SPY':>9}" for h in HORIZONS)
-             + f"{'t (20d)':>9}"]
+             f"{'group':<34}{'reports':>8}" + "".join(f"{f'{h}d excess':>12}{'beat':>7}" for h in horizons)
+             + f"{f't ({horizons[1]}d)':>10}"]
     for name in order:
         part = ev[by == name]
-        cells = [summarize(part, h) for h in HORIZONS]
+        cells = [summarize(part, h) for h in horizons]
         n = cells[1].get("n", 0)
         if not n:
             continue
         flag = "" if n >= MIN_EVENTS else "  (few)"
-        lines.append(f"{name:<26}{n:>8}" + "".join(
-            f"{c.get('mean', np.nan):>+11.2f}%{c.get('beat_spy', np.nan):>8.0f}%" for c in cells)
-            + f"{cells[1].get('t', np.nan):>9.1f}{flag}")
+        lines.append(f"{name:<34}{n:>8}" + "".join(
+            f"{c.get('mean', np.nan):>+11.2f}%{c.get('beat_spy', np.nan):>6.0f}%" for c in cells)
+            + f"{cells[1].get('t', np.nan):>10.1f}{flag}")
     return lines
 
 

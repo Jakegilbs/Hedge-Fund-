@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **135 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **142 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -335,6 +335,27 @@ margin or short selling, so it can never lose more than the account holds.
 - The **SCOREBOARD** compares the fund with the same money in SPY and shows the
   AI cost. That comparison, week after week, is the only honest test: the AI
   already knows how past years turned out, so it cannot be backtested.
+
+## Step 13: Insider buying study (free, no AI)
+
+The SEC requires a contact in every automated request. Add one line to `.env`
+(your name and email), once:
+
+```bash
+echo 'SEC_USER_AGENT=Your Name your.email@example.com' >> .env
+python -m desk.insider_study
+```
+
+It downloads the SEC's quarterly insider-filing data since 2016 (the first run
+takes a while: 40 quarters of 10-60 MB each, then prices for a few thousand
+companies), keeps every open-market **purchase** by an officer, director or
+10% owner, and measures what the stock did 20, 60 and 120 trading days after
+the filing became public, against SPY (large companies) or IWM (small ones).
+
+- Tables by number of insiders, dollars bought, who bought, company size, and
+  the stock's move before the purchase, plus clusters year by year.
+- As in Step 11, **2022 onward is locked**: pick a pattern from the exploration
+  years, write it down, then run `--confirm` once.
 
 ---
 
