@@ -94,6 +94,7 @@ desk/meet_the_team.py   command-line entry point
 desk/backtest.py        replays history: setups traded as shares and estimated options, plus a $100 account
 desk/rotation.py        monthly momentum rotation backtest vs SPY and an equal-weight benchmark
 desk/membership.py      historical S&P 500 membership, so backtests only rank stocks that were members then
+desk/earnings.py        earnings history (Yahoo, cached) and the positive earnings-drift flag
 tests/                  offline tests with a fake Claude client
 ```
 

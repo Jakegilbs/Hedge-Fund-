@@ -80,10 +80,12 @@ def test_metrics_and_halves():
 
 def test_grid_and_report_end_to_end():
     p = panel(800)
-    configs = [c for c in rot.default_grid(CFG) if c.top in (1, 3) and c.lookback == 60]
+    configs = [c for c in rot.default_grid(CFG) if c.top == 5 and c.lookback == 60]
+    assert len(rot.default_grid(CFG)) == 36 and not any(c.market_filter for c in rot.default_grid(CFG))
     benches, results = rot.run_grid(p, 300, configs, log=lambda *a: None)
     text = rot.report(benches, results)
     assert "SPY buy and hold" in text and "Equal weight" in text and "edge?" in text
+    assert "VERDICT per idea" in text and "smooth + earnings drift" in text
     cfg, r = results[0]
     assert "year by year" in rot.detail(cfg, r, benches[0], benches[1], p)
 
@@ -132,3 +134,65 @@ def test_holdings_table_adds_up_and_flags_bad_data():
     assert rot.suspicious_moves(p, ["WIN"]) == []
     p.close.iloc[350, p.close.columns.get_loc("WIN")] *= 3              # a bad print
     assert any("WIN" in f for f in rot.suspicious_moves(p, ["WIN"]))
+
+
+# ---------- smooth ranking and earnings drift ----------
+
+from desk import earnings as er
+
+
+def test_smooth_score_prefers_steady_climbs_and_skips_one_day_jumps():
+    idx = pd.bdate_range("2025-01-01", periods=130)
+    steady = pd.Series(np.linspace(100, 130, 130), index=idx) * (1 + 0.002 * np.sin(np.arange(130)))
+    jumpy = pd.Series(100.0, index=idx)
+    jumpy.iloc[100:] = 140.0                                   # one +40% day, flat otherwise
+    choppy = pd.Series(100 * np.exp(np.cumsum(np.r_[0, np.tile([0.04, -0.035], 65)[:129]])), index=idx)
+    c = pd.DataFrame({"STEADY": steady, "JUMPY": jumpy, "CHOPPY": choppy})
+    score, no_jump = rot.smooth_scores(c, 0, 129)
+    assert score.idxmax() == "STEADY"
+    assert not no_jump["JUMPY"] and no_jump["STEADY"]
+
+
+def test_earnings_normalise_handles_yahoo_table():
+    raw = pd.DataFrame({"EPS Estimate": [1.10, 1.00, 0.90], "Reported EPS": [None, 1.20, 0.80],
+                        "Surprise(%)": [None, 20.0, None]},
+                       index=pd.DatetimeIndex(["2026-10-30 16:00", "2026-07-30 16:00", "2026-04-30 08:00"])
+                       .tz_localize("America/New_York"))
+    df = er.normalise(raw)
+    assert list(df.date.dt.strftime("%Y-%m-%d")) == ["2026-04-30", "2026-07-30"]     # future report dropped
+    assert df.surprise_pct.iloc[0] == pytest.approx((0.80 - 0.90) / 0.90 * 100)      # filled from EPS
+    assert er.normalise(None).empty
+
+
+def test_drift_flag_starts_after_the_reaction_and_needs_a_beat_and_a_rise():
+    idx = pd.bdate_range("2026-01-05", periods=120)
+    close = pd.DataFrame({"BEAT": 100.0, "MISS": 100.0, "NONE": 100.0}, index=idx)
+    report = idx[20]
+    close.loc[idx[21]:, "BEAT"] = 108.0                         # rose on the report
+    close.loc[idx[21]:, "MISS"] = 108.0                         # rose, but missed estimates
+    ev = lambda surprise: pd.DataFrame({"date": [report], "eps_estimate": [1.0], "eps_actual": [1.1],
+                                        "surprise_pct": [surprise]})
+    flags = er.drift_flags({"BEAT": ev(10.0), "MISS": ev(-5.0)}, close)
+    assert not flags["BEAT"].iloc[:22].any()                    # not before the day after the reaction
+    assert flags["BEAT"].iloc[22] and flags["BEAT"].iloc[22 + er.DRIFT_DAYS - 1]
+    assert not flags["BEAT"].iloc[22 + er.DRIFT_DAYS]           # expires after about a quarter
+    assert not flags["MISS"].any() and not flags["NONE"].any()
+
+
+def test_earnings_version_only_picks_stocks_in_a_drift():
+    p = panel(drifts={"WIN": 0.004, "MID": 0.003, "LOSE": -0.002})
+    s = len(p.close) - 1
+    ok = pd.DataFrame(False, index=p.close.index, columns=p.close.columns)
+    ok["MID"] = True
+    cfg = rot.RotationConfig(**{**CFG.__dict__, "top": 2, "earnings": True})
+    assert list(rot.target_weights(rot.Panel(p.close, p.open, p.dollar_volume, p.spy, None, ok), s, cfg).index) == ["MID"]
+    assert rot.target_weights(p, s, cfg).empty                  # no earnings data: never picks
+
+
+def test_load_earnings_caches(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "EARNINGS_CACHE", tmp_path)
+    calls = []
+    fake = lambda sym: calls.append(sym) or None                # Yahoo has nothing for this one
+    er.load_earnings(["XYZ"], fetch=fake, pause=0, log=lambda *a: None)
+    er.load_earnings(["XYZ"], fetch=fake, pause=0, log=lambda *a: None)
+    assert calls == ["XYZ"]                                     # the empty result is cached too

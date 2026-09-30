@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **122 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **127 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -259,14 +259,22 @@ A different kind of strategy: hold the stocks that rose the most recently,
 rebalance once a month, and hold cash while SPY is below its 200-day average.
 
 ```bash
-python -m desk.rotation                              # 60 versions side by side, last 10 years
-python -m desk.rotation --lookback 60 --top 10       # one version, year by year, and what it would hold today
-python -m desk.rotation --lookback 252 --skip 21 --top 5 --weighting invvol
+python -m desk.rotation                              # 36 versions of 4 ranking ideas, last 10 years
+python -m desk.rotation --lookback 126 --top 10 --score smooth --earnings   # one version in detail
 python -m desk.rotation --rebalance 2                # every two months
 ```
 
 How to read it:
 
+- **Four ranking ideas** are tested, each with 3 lookbacks x 3 portfolio sizes:
+  biggest gain; **smooth** gain (rise relative to volatility, skipping stocks
+  whose rise came mostly from one day); and each of those limited to stocks in
+  a **positive earnings drift** (last report beat estimates and the stock rose
+  on it, within the last ~3 months). The **VERDICT** lines apply a rule set in
+  advance: an idea shows an edge only if at least 2 of every 3 of its versions
+  beat equal weight in both halves.
+- The first run downloads about 15 years of earnings history for each stock
+  (10-15 minutes, cached for a month).
 - **Only stocks that were in the S&P 500 at the time are ranked**, using a free
   historical membership list (downloaded weekly). The coverage lines show how
   many members have price data; the missing ones were mostly acquired or went

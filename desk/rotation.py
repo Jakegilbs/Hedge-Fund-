@@ -1,7 +1,7 @@
 """Momentum rotation backtester: hold the recent winners, rebalance monthly. Free: code only.
 
     python -m desk.rotation                          # the grid: many versions side by side
-    python -m desk.rotation --lookback 60 --top 10   # one version, with its yearly results
+    python -m desk.rotation --lookback 126 --top 10 --score smooth --earnings   # one version, in detail
     python -m desk.rotation --rebalance 2            # every two months
 
 Each rebalance day (the first trading day of the month) it ranks the stocks by
@@ -45,6 +45,9 @@ class RotationConfig:
     weighting: str = "equal"          # "equal" or "invvol" (steadier stocks get more)
     market_filter: bool = True        # cash while SPY is below its 200-day average
     positive_only: bool = True        # only stocks that actually rose over the lookback
+    score: str = "gain"               # "gain": biggest rise; "smooth": rise relative to its volatility,
+                                      #   skipping stocks whose rise came mostly from one day
+    earnings: bool = False            # only stocks in a positive earnings drift (desk/earnings.py)
     rebalance_months: int = 1
     cost_pct: float = 0.001           # per dollar traded (slippage; Robinhood charges no commission)
     min_price: float = 5.0
@@ -54,7 +57,8 @@ class RotationConfig:
     @property
     def label(self) -> str:
         look = f"{self.lookback}d" + (f"-skip{self.skip}" if self.skip else "")
-        return (f"{look:<12} top {self.top:<3} {self.weighting:<7} "
+        rank = self.score + ("+earn" if self.earnings else "")
+        return (f"{look:<12} {rank:<12} top {self.top:<3} {self.weighting:<7} "
                 f"{'filter' if self.market_filter else 'no filter'}")
 
 
@@ -66,6 +70,7 @@ class Panel:
     dollar_volume: pd.DataFrame
     spy: pd.Series
     member: pd.DataFrame | None = None     # True where a stock was in the index that day
+    earn_ok: pd.DataFrame | None = None    # True where a stock is in a positive earnings drift
 
     def eligible(self, s: int) -> pd.Series:
         """Stocks that may be ranked on day s: index members at the time (if known)."""
@@ -112,7 +117,15 @@ def target_weights(panel: Panel, s: int, cfg: RotationConfig) -> pd.Series:
           & gain.notna() & panel.eligible(s))
     if cfg.positive_only:
         ok &= gain > 0
-    picks = gain[ok].sort_values(ascending=False).head(cfg.top)
+    if cfg.earnings:
+        if panel.earn_ok is None:
+            return pd.Series(dtype=float)
+        ok &= panel.earn_ok.iloc[s].reindex(c.columns, fill_value=False).astype(bool)
+    rank = gain
+    if cfg.score == "smooth":
+        rank, smooth_ok = smooth_scores(c, begin, end)
+        ok &= smooth_ok
+    picks = rank[ok].sort_values(ascending=False).head(cfg.top)
     if picks.empty:
         return pd.Series(dtype=float)
     if cfg.weighting == "invvol":
@@ -123,6 +136,22 @@ def target_weights(panel: Panel, s: int, cfg: RotationConfig) -> pd.Series:
         w = pd.Series(1.0, index=picks.index)
     # Fewer than `top` qualifying stocks: each keeps its 1/top share and the rest stays in cash.
     return w / w.sum() * (len(picks) / cfg.top)
+
+
+JUMP_SHARE = 0.5   # a rise with more than half of it from one day is a jump, not smooth growth
+
+
+def smooth_scores(c: pd.DataFrame, begin: int, end: int) -> tuple[pd.Series, pd.Series]:
+    """Rise relative to its own volatility over the lookback: log gain / (daily volatility x
+    sqrt(days)). High = a steady climb. Also returns which stocks did NOT get most of
+    their rise from a single day."""
+    window = np.log(c.iloc[begin:end + 1])
+    daily = window.diff().iloc[1:]
+    total = window.iloc[-1] - window.iloc[0]
+    vol = daily.std() * math.sqrt(len(daily))
+    score = total / vol.replace(0, np.nan)
+    no_jump = ~(daily.max() > JUMP_SHARE * total.where(total > 0))
+    return score, no_jump.fillna(True)
 
 
 def equal_weight_all(panel: Panel, s: int, cfg: RotationConfig) -> pd.Series:
@@ -221,13 +250,14 @@ def halves(equity: pd.Series) -> tuple[pd.Series, pd.Series]:
 
 
 def default_grid(base: RotationConfig) -> list[RotationConfig]:
+    """Decided in advance (to avoid fishing for a lucky version): 3 lookbacks x 3 sizes for
+    each of 4 ranking ideas. No market filter: it hurt every version over 10 years."""
     out = []
-    for lookback, skip in ((60, 0), (126, 0), (252, 21)):
-        for top in (1, 3, 5, 10, 20):
-            for weighting in ("equal", "invvol"):
-                for mf in (True, False):
-                    out.append(replace(base, lookback=lookback, skip=skip, top=top, weighting=weighting,
-                                       market_filter=mf))
+    for score, earnings in (("gain", False), ("smooth", False), ("gain", True), ("smooth", True)):
+        for lookback, skip in ((60, 0), (126, 0), (252, 21)):
+            for top in (5, 10, 20):
+                out.append(replace(base, lookback=lookback, skip=skip, top=top, score=score,
+                                   earnings=earnings, market_filter=False))
     return out
 
 
@@ -246,18 +276,18 @@ def run_grid(panel: Panel, start: int, configs: list[RotationConfig], log=print)
 
 def report(benches: list[RotationResult], results: list[tuple[RotationConfig, RotationResult]],
            ai_cost_per_rebalance: float = 0.20) -> str:
-    line = "=" * 118
+    line = "=" * 130
     b_first = [metrics(halves(b.equity)[0]) for b in benches]
     b_second = [metrics(halves(b.equity)[1]) for b in benches]
     eq_first, eq_second = b_first[1].get("cagr_pct"), b_second[1].get("cagr_pct")
     e0 = benches[0].equity.dropna()
     lines = [line, f"MOMENTUM ROTATION: {e0.index[0].date()} to {e0.index[-1].date()}, $100 start", line,
-             f"{'version':<40}{'$100 ->':>9}{'CAGR':>7}{'max drop':>10}{'Sharpe':>8}{'worst mo':>10}"
+             f"{'version':<52}{'$100 ->':>9}{'CAGR':>7}{'max drop':>10}{'Sharpe':>8}{'worst mo':>10}"
              f"{'1st half':>10}{'2nd half':>10}  edge?"]
 
     def row(label: str, e: pd.Series, mark: str = "") -> str:
         m, (f, s) = metrics(e), (metrics(x) for x in halves(e))
-        return (f"{label:<40}{m['final']:>9.2f}{m['cagr_pct']:>6.1f}%{m['max_drawdown_pct']:>9.1f}%"
+        return (f"{label:<52}{m['final']:>9.2f}{m['cagr_pct']:>6.1f}%{m['max_drawdown_pct']:>9.1f}%"
                 f"{(m['sharpe'] or 0):>8.2f}{(m['worst_month_pct'] or 0):>9.1f}%"
                 f"{f.get('cagr_pct', 0):>9.1f}%{s.get('cagr_pct', 0):>9.1f}%  {mark}")
 
@@ -273,6 +303,17 @@ def report(benches: list[RotationResult], results: list[tuple[RotationConfig, Ro
         wins += edge
         lines.append(row(cfg.label, r.equity, "YES" if edge else ""))
     n_reb = results[0][1].rebalances if results else 0
+    families: dict[str, list[bool]] = {}
+    for cfg, r in results:
+        f, s = (metrics(x).get("cagr_pct") for x in halves(r.equity))
+        name = cfg.score + (" + earnings drift" if cfg.earnings else "")
+        families.setdefault(name, []).append(f is not None and s is not None and f > eq_first and s > eq_second)
+    lines += ["", "--- VERDICT per idea (decided in advance: an idea counts only if at least 2 of every 3 "
+                  "versions beat equal weight in both halves)"]
+    for name, flags in families.items():
+        n, k = len(flags), sum(flags)
+        verdict = "EDGE" if k * 3 >= 2 * n else "no edge"
+        lines.append(f"  {name:<28} {k} of {n} versions  -> {verdict}")
     lines += ["",
               f"{wins} of {len(results)} versions beat equal weight in both halves. With this many versions, "
               "a few will look good by luck:",
@@ -356,7 +397,7 @@ def detail(cfg: RotationConfig, r: RotationResult, spy: RotationResult, ew: Rota
             lines.append(f"{day}: " + ", ".join(f"{t} {x:+.0f}%" for t, x in zip(g.ticker, g.return_pct)))
     now = target_weights(panel, len(panel.close) - 1, cfg)
     if now.empty:
-        lines.append("Holdings today: CASH (market filter or no stock with a positive gain)")
+        lines.append("Holdings today: CASH (market filter, or no stock passes the rules)")
     else:
         c = panel.close.iloc[-1]
         gain = c / panel.close.iloc[-1 - cfg.skip - cfg.lookback] - 1
@@ -374,7 +415,10 @@ def main() -> None:
     ap.add_argument("--skip", type=int, default=0, help="skip the most recent N days (e.g. 21)")
     ap.add_argument("--top", type=int, default=10, help="stocks held (default 10)")
     ap.add_argument("--weighting", choices=("equal", "invvol"), default="equal")
-    ap.add_argument("--no-filter", action="store_true", help="stay invested when SPY is below its 200-day average")
+    ap.add_argument("--filter", action="store_true", help="hold cash while SPY is below its 200-day average")
+    ap.add_argument("--score", choices=("gain", "smooth"), default="gain",
+                    help="gain: biggest rise; smooth: rise relative to volatility, no one-day jumps")
+    ap.add_argument("--earnings", action="store_true", help="only stocks in a positive earnings drift")
     ap.add_argument("--rebalance", type=int, default=1, help="rebalance every N months (default 1)")
     ap.add_argument("--membership", choices=("history", "today"), default="history",
                     help="history (default): only stocks in the S&P 500 at the time; "
@@ -422,18 +466,32 @@ def main() -> None:
                   + ("" if have / max(1, len(members)) > 0.9 else "  <- missing ones were mostly acquired or delisted"))
     else:
         panel = panel_today
+    needs_earnings = not args.lookback or args.earnings
+    if needs_earnings:
+        from .earnings import drift_flags, load_earnings
+        earn = load_earnings(list(panel.close.columns))
+        flags = drift_flags(earn, panel.close)
+        panel = replace(panel, earn_ok=flags)
+        panel_today = replace(panel_today, earn_ok=flags)
+        have = sum(1 for t in panel.close.columns if len(earn.get(t, [])))
+        oldest = min((earn[t].date.min() for t in panel.close.columns if len(earn.get(t, []))), default=None)
+        print(f"Earnings history for {have} of {panel.close.shape[1]} stocks"
+              + (f", back to {pd.Timestamp(oldest).date()}" if oldest is not None else "")
+              + ". Stocks without it are never picked by the earnings versions.")
     print(f"Testing from {panel.close.index[start].date()}...")
 
     base = RotationConfig(rebalance_months=args.rebalance)
     if args.lookback:
         configs = [replace(base, lookback=args.lookback, skip=args.skip, top=args.top,
-                           weighting=args.weighting, market_filter=not args.no_filter)]
+                           weighting=args.weighting, market_filter=args.filter, score=args.score,
+                           earnings=args.earnings)]
     else:
         configs = default_grid(base)
     benches, results = run_grid(panel, start, configs)
     text = report(benches, results)
     cfg, r = (results[0] if args.lookback else
-              next((c, x) for c, x in results if c == replace(base, lookback=60, top=10)))
+              next((c, x) for c, x in results                  # the idea being tested
+                   if c.lookback == 126 and c.top == 10 and c.score == "smooth" and c.earnings))
     biased = None
     if hist:
         biased = (simulate(panel_today, start, cfg),
@@ -446,7 +504,7 @@ def main() -> None:
     path.write_text(text)
     holdings_table(panel, r).to_csv(BACKTEST_DIR / f"rotation_holdings_{stamp}.csv", index=False)
     print(f"\nSaved: {path.relative_to(DATA_DIR.parent)} and rotation_holdings_{stamp}.csv "
-          f"(every monthly position of {cfg.label.split()[0]} top {cfg.top})")
+          f"(every monthly position of: {' '.join(cfg.label.split())})")
 
 
 if __name__ == "__main__":
