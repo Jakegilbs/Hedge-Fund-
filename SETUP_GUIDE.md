@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **102 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **107 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -161,7 +161,9 @@ call and costs nothing.
 
 The desk runs in **hybrid** mode (`config/desk.toml`, `[strategy] instrument = "hybrid"`):
 a bullish pick is a **long call** when a liquid, affordable one exists, otherwise
-**fractional shares** of the stock; a bearish pick is a **long put** or no trade.
+**fractional shares** of the stock. Two rules come from the backtest (Step 9):
+**bullish setups only** (no puts), and **no new trades while SPY is below its
+50-day average** (the run says so at the top and costs nothing that day).
 Your Robinhood Agentic account needs **options trading enabled** (Robinhood asks
 a few questions to approve it).
 
@@ -176,13 +178,14 @@ day:
    **Put** exactly as shown, tap the **strike**, choose **Buy**, set the
    number of contracts and a **limit price** equal to the one shown.
 4. Once it fills, protect it with the **exit plan** printed under the order:
-   - Stop: place a **stop-limit sell** at the stop price if the app offers it;
-     otherwise check the option each afternoon and sell if it is at or below
-     the stop.
+   - Stop: sell the option if the **stock** trades below the stop level shown
+     ("sell the option if TICKER trades below $X"). That is where the setup is
+     proven wrong. Robinhood cannot trigger an option sale from the stock price,
+     so set a **price alert** on the stock at that level in the app and sell
+     when it fires.
    - Take profit: a **limit sell** at the take-profit price (good till canceled).
    - Time: sell by the "sell by" date no matter what.
-   Robinhood allows only one open sell order per contract, so choose the stop
-   or the take-profit order and watch the other level yourself.
+   Keep the take-profit as the open sell order and handle the stop with the alert.
 5. For a **shares** order (`BUY TICKER: 0.1234 shares, LIMIT $…`): open the stock,
    **Buy**, switch the amount to **shares**, enter the exact number and a limit
    price equal to the one shown. If the app only allows a market order for
@@ -203,9 +206,9 @@ day:
    the number of contracts as shares, and the premium you paid as entry.
 
 Skipping a trade is always allowed. Every trade uses all available cash, and
-its cost is the most it can lose: the 15% stop limits a normal loss to about
-15%, but an option can gap through the stop, and if the stop is not honoured
-an option can expire worthless.
+its cost is the most it can lose. Because the stop is on the stock, an option
+usually loses more than 15% when it is hit (often 30-50%). If the stop is not
+honoured, an option can expire worthless.
 
 ## Step 9: Test the strategy on history (free, no AI)
 

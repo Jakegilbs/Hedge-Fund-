@@ -11,6 +11,10 @@ paper_equity = 100.0
 # "options": long calls and long puts only (bullish view -> call, bearish -> put).
 # "stock": long stock only.
 instrument = "hybrid"
+# From the backtest (python -m desk.backtest): bearish setups (puts) lost money, and
+# trades taken while SPY was below its 50-day average did worse.
+bullish_only = true            # no puts: calls or shares on bullish setups only
+market_filter = true           # no new trades while SPY is below its 50-day average
 
 [options]
 # How code picks the one contract offered for each candidate.
@@ -22,7 +26,9 @@ max_delta = 0.75
 max_spread_pct = 0.12          # (ask - bid) / mid
 min_open_interest = 100
 # Exit plan for every option position (shown with each approved order):
-stop_loss_pct = 0.15           # sell if the option loses 15% of what was paid
+stop_on_stock = true           # sell the option when the STOCK hits the setup's stop. The backtest
+                               # showed a -15% option stop fires on a ~0.8% stock move (noise).
+stop_loss_pct = 0.15           # used only if stop_on_stock = false
 take_profit_pct = 1.00         # sell if the option doubles
 exit_days_before_expiry = 5    # never hold into the last days (fastest decay)
 
@@ -99,4 +105,4 @@ catalyst_analyst = "v1"
 regime_analyst = "v1"
 portfolio_manager = "v3"   # v3: all-in, conviction 3 acceptable (stock mode)
 portfolio_manager_options = "options_v1"   # options mode
-portfolio_manager_hybrid = "hybrid_v1"     # hybrid mode
+portfolio_manager_hybrid = "hybrid_v2"     # hybrid mode

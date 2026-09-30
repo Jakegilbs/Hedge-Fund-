@@ -69,6 +69,7 @@ class TeamRun:
     stopped_reason: str | None = None
     data: dict = field(default_factory=dict)
     options_menu: dict | None = None
+    market: dict | None = None           # the market filter: SPY vs its 50-day average
 
     @property
     def agents(self) -> list[AgentResult]:
@@ -149,13 +150,45 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
              tickers: list[str] | None = None, time_et: str | None = None,
              now: datetime | None = None, universe: list[str] | None = None,
              fetch_option_chains=options.fetch_chains) -> TeamRun:
-    """Run the team once. `tickers` overrides the scanner (for testing prompts)."""
+    """Run the team once. `tickers` overrides the scanner (for testing prompts).
+
+    With the market filter on, no new position is opened while SPY is below its
+    50-day average: the analysts are not even called unless a position is held."""
+    run = _run_team(settings, runner, account, bars, fetch_catalysts, tickers, time_et, now, universe,
+                    fetch_option_chains)
+    if run.market and not run.market["up"] and run.gate:
+        _block_new_entries(run.gate, run.market)
+    return run
+
+
+def _market_blocked_reason(m: dict) -> str:
+    return (f"market filter: SPY ${m['close']:.2f} is below its 50-day average ${m['ema50']:.2f}, "
+            "so no new trades")
+
+
+def _block_new_entries(gate: gatekeeper.GateResult, market: dict) -> None:
+    """Move every approved buy to rejected; exits stay approved."""
+    keep = []
+    for o in gate.approved:
+        if getattr(o, "action", "buy") == "buy":
+            gate.rejected.append(gatekeeper.Rejection(o.ticker, "buy", [_market_blocked_reason(market)]))
+        else:
+            keep.append(o)
+    gate.approved = keep
+
+
+def _run_team(settings, runner, account, bars, fetch_catalysts, tickers, time_et, now, universe,
+              fetch_option_chains) -> TeamRun:
     now = now or datetime.now(ZoneInfo("America/New_York"))
     time_et = time_et or now.strftime("%Y-%m-%d %H:%M")
     bars, live = market_data.split_incomplete_bar(bars, now)
     reference = str(bars["SPY"].index[-1].date()) if "SPY" in bars else None
     allow = list(universe or settings.allowlist)
     tech_all = market_data.technical_packet(bars, allow, reference, live)
+    market = market_data.market_trend(bars) if settings.market_filter else None
+    blocked = settings.market_filter and not (market and market["up"])
+    if blocked and market is None:
+        market = {"symbol": "SPY", "close": float("nan"), "ema50": float("nan"), "up": False}
 
     if tickers:
         outside = sorted(set(t.upper() for t in tickers) - set(allow))
@@ -163,8 +196,11 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
             raise ValueError(f"not on the allowlist: {outside}")
         candidates = sorted(set(t.upper() for t in tickers) | set(account.held))
         scan = None
+    elif blocked:
+        candidates = sorted(account.held)      # open positions are still reviewed
+        scan = None
     else:
-        directions = ("bullish", "bearish") if settings.uses_options else ("bullish",)
+        directions = settings.directions
         scan = pick_candidates(tech_all["tickers"], account.held, settings.max_candidates,
                                settings.scan_min_price, settings.scan_min_dollar_volume, directions=directions,
                                affordable=options_affordable(settings, account.cash),
@@ -174,15 +210,19 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
                                max_checks=settings.options_max_checks)
         candidates = scan.candidates
 
-    run = TeamRun(time_et=time_et, candidates=candidates, scan=scan)
+    run = TeamRun(time_et=time_et, candidates=candidates, scan=scan, market=market)
     if reference is None:
         run.stopped_reason = "no SPY data: cannot judge the market or data freshness"
+        return run
+    if blocked and not candidates:
+        run.stopped_reason = _market_blocked_reason(market) + " and nothing is held (no AI cost)"
         return run
     if not candidates:
         run.stopped_reason = "quiet day: no setups and no open positions (no AI cost)"
         return run
 
-    why = scan.why if scan else {t: "requested by you" for t in candidates}
+    why = scan.why if scan else {t: ("open position" if t in account.held and blocked else "requested by you")
+                                 for t in candidates}
     tech = {**tech_all, "tickers": {t: {"why_selected": why.get(t, ""), **tech_all["tickers"][t]}
                                     for t in candidates if t in tech_all["tickers"]},
             "missing_data": [t for t in candidates if t not in tech_all["tickers"]]}
@@ -215,8 +255,7 @@ def run_team(settings: Settings, runner: ClaudeRunner, account: AccountState,
     _check_reports(run, candidates, settings.risk.min_reward_risk)
     tradeable = [v.ticker for v in run.analysts["technical_analyst"].report.views
                  if v.recommendation == "candidate" and v.data_ok
-                 and (v.direction in ("bullish", "bearish") if settings.uses_options
-                      else v.direction != "bearish")]
+                 and v.direction in settings.directions]
     if not tradeable and not account.held:
         run.stopped_reason = ("no trade possible: the Technical Analyst rated nothing a 'candidate' and "
                               "nothing is held, so the Portfolio Manager was skipped (no PM cost)")

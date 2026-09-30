@@ -237,5 +237,18 @@ def regime_packet(bars: dict[str, pd.DataFrame], regime_symbols: list[str], sect
     }
 
 
+def market_trend(bars: dict[str, pd.DataFrame], symbol: str = "SPY", span: int = 50) -> dict | None:
+    """Is the market in an uptrend? SPY's last completed close vs its 50-day average (EMA).
+
+    The backtest showed trades taken while SPY was below this line did worse.
+    """
+    if symbol not in bars or len(bars[symbol]) < span:
+        return None
+    c = bars[symbol]["Close"]
+    close, avg = float(c.iloc[-1]), float(c.ewm(span=span, adjust=False).mean().iloc[-1])
+    return {"symbol": symbol, "date": str(c.index[-1].date()), "close": round(close, 2),
+            "ema50": round(avg, 2), "up": close > avg}
+
+
 def now_et() -> str:
     return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M")

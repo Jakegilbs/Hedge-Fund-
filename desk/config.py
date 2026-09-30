@@ -56,6 +56,15 @@ class Settings:
     nasdaq_max_price: float = 30.0
     nasdaq_min_dollar_volume: float = 20_000_000
     options: "OptionsConfig" = None      # set by load_settings
+    bullish_only: bool = False           # no puts / bearish trades
+    market_filter: bool = False          # new trades only while SPY is above its 50-day average
+
+    @property
+    def directions(self) -> tuple[str, ...]:
+        """Trade directions the scanner looks for."""
+        if self.uses_options and not self.bullish_only:
+            return ("bullish", "bearish")
+        return ("bullish",)
 
     @property
     def uses_options(self) -> bool:
@@ -111,6 +120,8 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         nasdaq_max_price=float(raw["universe"].get("nasdaq_max_price", 30.0)),
         nasdaq_min_dollar_volume=float(raw["universe"].get("nasdaq_min_dollar_volume", 20_000_000)),
         options=OptionsConfig(**raw.get("options", {})),
+        bullish_only=bool(raw.get("strategy", {}).get("bullish_only", False)),
+        market_filter=bool(raw.get("strategy", {}).get("market_filter", False)),
     )
 
 

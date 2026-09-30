@@ -94,10 +94,17 @@ class FakeClaude:
                                content=[SimpleNamespace(type="text", text=self.by_title[title].model_dump_json())])
 
 
-def run_options(bars, mode="options", fetch_empty=False, **kw):
+def legacy(mode):
+    """The rules before the backtest: puts allowed, -15% option stop, no market filter."""
     from dataclasses import replace
+    s = load_settings()
+    return replace(s, instrument=mode, bullish_only=False, market_filter=False,
+                   options=replace(s.options, stop_on_stock=False))
+
+
+def run_options(bars, mode="options", fetch_empty=False, settings=None, **kw):
     from desk.llm import ClaudeRunner
-    settings = replace(load_settings(), instrument=mode)
+    settings = settings or legacy(mode)
     spot = float(bars["CHEAP"]["Close"].iloc[-1])
 
     def fake_chains(ticker, cfg, today, max_expiries=None):
@@ -338,3 +345,55 @@ def test_trigger_up_to_5pct_away_is_allowed_beyond_that_rejected():
     run, _ = run_options(cheap_bars(), mode="hybrid", fetch_empty=True, instrument="shares",
                          entry_mult=1.08, stop_mult=1.03, target_mult=1.30)
     assert not run.gate.approved and "5%" in " ".join(run.gate.rejected[0].reasons)
+
+
+# ---------- rules from the backtest: stock stop, bullish only, market filter ----------
+
+def live_rules(mode="hybrid"):
+    from dataclasses import replace
+    s = replace(load_settings(), instrument=mode)
+    assert s.bullish_only and s.market_filter and s.options.stop_on_stock   # what config/desk.toml says
+    return s
+
+
+def market_bars(spy_drift):
+    from .conftest import make_bars
+    return {"SPY": make_bars(drift=spy_drift, seed=2), "CHEAP": make_bars(start=15.0, drift=0.0, seed=7)}
+
+
+def test_market_trend_compares_spy_with_its_50_day_average():
+    from desk.market_data import market_trend
+    assert market_trend(market_bars(0.004))["up"] is True
+    assert market_trend(market_bars(-0.004))["up"] is False
+    assert market_trend({}) is None
+
+
+def test_option_exit_is_the_stock_stop():
+    run, _ = run_options(market_bars(0.004), mode="hybrid", settings=live_rules())
+    [o] = run.gate.approved
+    assert o.option_type == "call" and o.stop_price is None
+    assert o.stock_stop < o.stock_entry            # the exit is the stock's own stop level
+
+
+def test_market_below_its_average_blocks_new_trades():
+    run, _ = run_options(market_bars(-0.004), mode="hybrid", settings=live_rules())
+    assert run.market["up"] is False and not run.gate.approved
+    assert "market filter" in " ".join(run.gate.rejected[0].reasons)
+
+
+def test_market_filter_skips_the_ai_when_nothing_is_held():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from desk.llm import ClaudeRunner
+    claude = FakeClaude({})
+    run = run_team(live_rules(), ClaudeRunner(client=claude), AccountState(100, 100), market_bars(-0.004),
+                   universe=["SPY", "CHEAP"], now=datetime(2026, 9, 30, 17, 0, tzinfo=ZoneInfo("America/New_York")),
+                   fetch_catalysts=lambda *a, **k: {}, fetch_option_chains=lambda *a, **k: {})
+    assert claude.calls == [] and "market filter" in run.stopped_reason and run.total_cost_usd == 0
+
+
+def test_bullish_only_never_trades_a_put():
+    s = live_rules()
+    assert s.directions == ("bullish",)
+    run, claude = run_options(market_bars(0.004), mode="hybrid", settings=s, direction="bearish")
+    assert run.pm is None and "HybridDecision" not in claude.calls     # dropped before the PM

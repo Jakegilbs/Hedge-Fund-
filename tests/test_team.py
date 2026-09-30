@@ -11,7 +11,7 @@ from desk.schemas import (CatalystReport, CatalystView, PMDecision, RegimeReport
                           TechnicalView)
 from desk.team import AccountState, run_team
 
-STOCK = replace(load_settings(), instrument="stock")   # these tests cover stock mode
+STOCK = replace(load_settings(), instrument="stock", market_filter=False)   # stock mode, no market filter
 
 REPORTS = {
     TechnicalReport: TechnicalReport(views=[TechnicalView(

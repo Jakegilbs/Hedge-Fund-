@@ -2,15 +2,18 @@
 
 An AI analyst team that swing-trades (2–15 day holds) a small Robinhood Agentic
 account. In the default **hybrid** mode a bullish pick is a long call when a
-liquid, affordable contract exists and fractional shares otherwise; a bearish
-pick is a long put or nothing. `instrument = "options"` trades long calls and
-puts only. Three analysts research
-bullish and bearish setups, code picks one liquid, affordable contract per
+liquid, affordable contract exists and fractional shares otherwise. Three
+analysts research the setups, code picks one liquid, affordable contract per
 candidate, a portfolio manager chooses at most one, and code (not AI) sizes it
 with all available cash and enforces every limit: one position at a time,
 conviction 3+/5, stock reward-to-risk 1.5+, no earnings inside the option's
-life, and an exit plan on every trade (-15% stop, +100% take profit, out 5 days
-before expiry). Set `instrument = "stock"` in `config/desk.toml` to trade shares instead.
+life, and an exit plan on every trade (sell when the stock breaks the setup's
+stop, +100% take profit, out 5 days before expiry).
+
+Rules set from the backtest (`python -m desk.backtest`): **bullish setups only**
+(bearish setups lost money), **no new trades while SPY is below its 50-day
+average**, and the option stop is the **stock's** stop level (a -15% option stop
+fired on ordinary daily noise). All three are switches in `config/desk.toml`.
 
 **Status: Level 1 (you approve and place every trade).** The analyst team runs
 on real market data, the Gatekeeper checks and sizes every order, and you place

@@ -180,7 +180,7 @@ class ApprovedOptionOrder:
     contracts: int
     limit_price: float          # per share; one contract = 100 shares
     cost_usd: float
-    stop_price: float           # sell if the option falls to this
+    stop_price: float | None    # sell if the option falls to this (None: the stock stop is the exit)
     take_profit_price: float    # sell if the option rises to this
     exit_by: str                # sell by this date regardless
     stock_entry: float | None = None
@@ -236,6 +236,8 @@ def check_options(decision, *, cash: float, pnl_today: float, equity: float, ope
             reasons.append("news analyst rates event risk high")
         elif t not in event_risk:
             reasons.append("no news/catalyst report for this ticker")
+        if opts.stop_on_stock and (view is None or not view.stop):
+            reasons.append("no stock stop level: the option's exit is the stock's stop")
         if o.direction == "bullish" and regime.posture == "flat":
             reasons.append("no calls while the market regime posture is flat")
         if not reasons and slots <= 0:
@@ -255,7 +257,7 @@ def check_options(decision, *, cash: float, pnl_today: float, equity: float, ope
             ticker=t, contract_symbol=contract["contract_symbol"], option_type=contract["type"],
             strike=contract["strike"], expiry=contract["expiry"], contracts=contracts, limit_price=price,
             cost_usd=round(contracts * price * 100, 2),
-            stop_price=round(price * (1 - opts.stop_loss_pct), 2),
+            stop_price=None if opts.stop_on_stock else round(price * (1 - opts.stop_loss_pct), 2),
             take_profit_price=round(price * (1 + opts.take_profit_pct), 2),
             exit_by=exit_by.isoformat(), stock_entry=view.entry, stock_stop=view.stop, stock_target=view.target,
             trigger_price=pending_trigger(o.direction, view.entry, (last_prices or {}).get(t)),

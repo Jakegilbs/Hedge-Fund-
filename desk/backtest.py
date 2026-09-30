@@ -642,14 +642,20 @@ def main() -> None:
     ap.add_argument("--equity", type=float, help="starting account (default 100)")
     ap.add_argument("--option-stop", help="option stop: a fraction like 0.15 (live default) or 0.5, "
                                           "or 'stock' to exit when the stock hits the setup's stop")
-    ap.add_argument("--setups", help=f"only these setups, comma-separated ({', '.join(SETUP_NAMES)})")
+    ap.add_argument("--setups", help=f"only these setups, comma-separated ({', '.join(SETUP_NAMES)}); "
+                                     "default: what the live desk trades")
     ap.add_argument("--with-market", action="store_true",
                     help="only trades with the market: bullish while SPY is above its 50-day average, "
-                         "bearish while below")
+                         "bearish while below (on by default when the live desk's market filter is on)")
+    ap.add_argument("--any-market", action="store_true", help="turn the market filter off for this run")
     ap.add_argument("--half", choices=("first", "second"),
                     help="only the first or second half of the period: tune on one, confirm on the other")
     args = ap.parse_args()
-    setups = [x.strip() for x in args.setups.split(",")] if args.setups else list(SETUP_NAMES)
+    from .config import load_settings as _load
+    live = _load()
+    live_setups = [n for n in SETUP_NAMES if DIRECTION[n] in live.directions]
+    setups = [x.strip() for x in args.setups.split(",")] if args.setups else live_setups
+    with_market = (args.with_market or live.market_filter) and not args.any_market
     unknown = set(setups) - set(SETUP_NAMES)
     if unknown:
         raise SystemExit(f"Unknown setup(s): {', '.join(sorted(unknown))}. Choose from {', '.join(SETUP_NAMES)}.")
@@ -663,6 +669,7 @@ def main() -> None:
                    max_stop_distance_pct=settings.risk.max_stop_distance_pct,
                    option_delta=settings.options.target_delta,
                    option_stop_pct=settings.options.stop_loss_pct,
+                   option_stop_on_stock=settings.options.stop_on_stock,
                    option_take_profit_pct=settings.options.take_profit_pct,
                    exit_days_before_expiry=settings.options.exit_days_before_expiry,
                    risk_free_rate=settings.options.risk_free_rate,
@@ -673,6 +680,7 @@ def main() -> None:
         overrides["option_stop_on_stock"] = True
     elif args.option_stop:
         overrides["option_stop_pct"] = float(args.option_stop)
+        overrides["option_stop_on_stock"] = False
     cfg = replace(cfg, **{k: v for k, v in overrides.items() if v is not None})
 
     tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else load_universe(settings)
@@ -686,19 +694,17 @@ def main() -> None:
     print(f"Price data for {sum(1 for t in tickers if t in bars)} of {len(tickers)} tickers. Simulating...")
 
     trades, filtered = run_backtest(bars, tickers, cfg, years=args.years)
-    trades = select_trades(trades, setups, args.with_market, args.half)
-    notes = [f"setups: {', '.join(setups)}"] if args.setups else []
-    notes += ["only trades with the market"] if args.with_market else []
+    trades = select_trades(trades, setups, with_market, args.half)
+    notes = [f"setups: {', '.join(setups)}"]
+    notes += ["only trades with the market (SPY vs its 50-day average)"] if with_market else ["any market"]
     notes += [f"{args.half} half of the period only"] if args.half else []
     if notes:
         print("Filters: " + "; ".join(notes))
     portfolios = []
     if not trades.empty:
-        for mode, rf, label in (("hybrid", False, "hybrid (the live desk)"),
-                                ("hybrid", True, "hybrid, only with the market"),
-                                ("shares", False, "shares only (bullish)"),
-                                ("shares", True, "shares only, only with the market")):
-            portfolios.append(run_portfolio(trades, cfg, mode, rf, label))
+        for mode, label in (("hybrid", "hybrid: call if affordable, else shares"),
+                            ("shares", "shares only")):
+            portfolios.append(run_portfolio(trades, cfg, mode, False, label))
     text = report(trades, filtered, cfg, portfolios, args.years)
     print(text)
 

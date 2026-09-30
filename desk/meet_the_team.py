@@ -28,6 +28,11 @@ ACCOUNT_FILE = DATA_DIR / "account.toml"
 def _print_run(run: TeamRun) -> None:
     line = "=" * 72
     print(f"\n{line}\nTEAM RUN {run.time_et} ET   candidates: {', '.join(run.candidates) or 'none'}\n{line}")
+    if run.market:
+        m = run.market
+        state = "above" if m["up"] else "BELOW"
+        print(f"\nMarket filter: SPY ${m['close']:.2f} is {state} its 50-day average ${m['ema50']:.2f}"
+              + ("" if m["up"] else ": no new trades today, open positions are still reviewed"))
     if run.scan:
         _print_scan(run.scan)
     for role, a in run.analysts.items():
@@ -90,11 +95,16 @@ def _print_gate(gate) -> None:
     for o in gate.approved:
         if hasattr(o, "contract_symbol"):
             kind = o.option_type.upper()
+            if o.stop_price is None:
+                side = "below" if o.option_type == "call" else "above"
+                stop = f"sell the option if {o.ticker} trades {side} ${o.stock_stop:.2f} (the setup's stop)"
+            else:
+                stop = (f"sell if the option falls to ${o.stop_price:.2f} "
+                        f"(-{round((1 - o.stop_price / o.limit_price) * 100)}% stop)")
             print(f"  BUY {o.contracts} x {o.ticker} {o.expiry} ${o.strike:g} {kind}"
                   f"  LIMIT ${o.limit_price:.2f} per share (${o.cost_usd:.2f} total)\n"
                   f"       contract {o.contract_symbol}\n"
-                  f"       EXIT PLAN: sell if the option falls to ${o.stop_price:.2f} "
-                  f"(-{round((1 - o.stop_price / o.limit_price) * 100)}% stop), "
+                  f"       EXIT PLAN: {stop}, "
                   f"take profit at ${o.take_profit_price:.2f}, sell by {o.exit_by} at the latest\n"
                   f"       stock view: entry {o.stock_entry}, wrong below/above {o.stock_stop}, "
                   f"target {o.stock_target}")
@@ -171,8 +181,7 @@ def main() -> None:
         tech = market_data.technical_packet(done, universe, ref, live)
         scan = pick_candidates(tech["tickers"], account.held, settings.max_candidates,
                                settings.scan_min_price, settings.scan_min_dollar_volume,
-                               directions=("bullish", "bearish") if settings.uses_options
-                               else ("bullish",),
+                               directions=settings.directions,
                                affordable=options_affordable(settings, account.cash),
                                upside_weight=UPSIDE_WEIGHT if settings.uses_options else 0.0)
         print(json.dumps(market_data.regime_packet(

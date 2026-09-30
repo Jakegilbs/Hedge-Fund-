@@ -27,6 +27,7 @@ class OptionsConfig:
     max_spread_pct: float = 0.12
     min_open_interest: int = 100
     stop_loss_pct: float = 0.15
+    stop_on_stock: bool = False      # exit when the STOCK hits the setup's stop, not on an option %
     take_profit_pct: float = 1.00
     exit_days_before_expiry: int = 7
     risk_free_rate: float = 0.045
