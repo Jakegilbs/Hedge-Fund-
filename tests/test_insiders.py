@@ -142,3 +142,18 @@ def test_stops_early_with_instructions_when_nothing_is_found(tmp_path, monkeypat
     with pytest.raises(SystemExit, match="Copy Link"):
         ins.load_purchases(2016, log=lambda *a: None, download=lambda q, ua: calls.append(q) or None)
     assert len(calls) == 3
+
+
+def test_strategy_rule_and_verdict():
+    rng = np.random.default_rng(1)
+    n = 400
+    ev = pd.DataFrame({"who": ["CEO/CFO/President bought"] * 200 + ["directors only"] * 200,
+                       "value": [1e6] * 100 + [10e6] * 100 + [1e6] * 200,
+                       "dollar_volume": [5e6] * 50 + [0.5e6] * 50 + [5e6] * 300})
+    mask = st.strategy_mask(ev)
+    assert mask.sum() == 50                                   # CEO, $500k-5M, not a micro cap
+    ev["excess_60"] = np.where(mask, 6 + rng.normal(0, 3, n), rng.normal(0, 3, n))
+    text = "\n".join(st.verdict(ev))
+    assert "VERDICT: PASSED" in text and text.count("[PASS]") == 3
+    ev["excess_60"] = rng.normal(0, 3, n)
+    assert "VERDICT: FAILED" in "\n".join(st.verdict(ev))

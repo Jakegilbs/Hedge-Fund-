@@ -115,6 +115,41 @@ def add_returns(events: pd.DataFrame, bars: dict[str, pd.DataFrame]) -> pd.DataF
     return pd.DataFrame(out)
 
 
+# ---- The strategy, written down on 2026-10-01 from the 2016-2021 tables, BEFORE the locked
+# years were seen (see STRATEGY.md). Do not change these after running --confirm.
+STRATEGY = ("Executive conviction buys: the CEO, CFO or President bought $500k-$5M of stock in the open "
+            "market within 30 days, at a company trading at least $1M a day. Buy at the first open after the "
+            "filing; hold 60 trading days.")
+STRATEGY_HOLD = 60
+PASS_MARGIN = 1.5        # 60-day excess at least 1.5 points above the same period's baseline
+PASS_T = 2.0
+PASS_BEAT = 50.0
+
+
+def strategy_mask(ev: pd.DataFrame) -> pd.Series:
+    return ((ev.who == "CEO/CFO/President bought") & ev.value.between(500e3, 5e6)
+            & (ev.dollar_volume >= 1e6))
+
+
+def verdict(ev: pd.DataFrame) -> list[str]:
+    """The strategy against the pre-set pass rules, on whatever period `ev` covers."""
+    from .earnings_study import summarize
+    base, strat = summarize(ev, STRATEGY_HOLD), summarize(ev[strategy_mask(ev)], STRATEGY_HOLD)
+    lines = ["", "--- THE STRATEGY (rules fixed in advance)", STRATEGY]
+    if not strat.get("n"):
+        return lines + ["No events in this period."]
+    checks = [
+        (f"60-day excess {strat['mean']:+.2f}% vs baseline {base['mean']:+.2f}%: needs at least "
+         f"+{PASS_MARGIN} points more", strat["mean"] - base["mean"] >= PASS_MARGIN),
+        (f"t = {strat['t']:.1f}: needs above {PASS_T:g}", strat["t"] > PASS_T),
+        (f"beat the benchmark in {strat['beat_spy']:.0f}% of {strat['n']} events: needs {PASS_BEAT:.0f}%+",
+         strat["beat_spy"] >= PASS_BEAT),
+    ]
+    lines += [f"  [{'PASS' if ok else 'FAIL'}] {text}" for text, ok in checks]
+    lines.append("VERDICT: " + ("PASSED all three" if all(ok for _, ok in checks) else "FAILED") )
+    return lines
+
+
 SIZE_BUCKETS = [(0, 1e6, "under $1M/day (micro)"), (1e6, 10e6, "$1-10M/day (small)"),
                 (10e6, 100e6, "$10-100M/day (mid)"), (100e6, np.inf, "over $100M/day (large)")]
 VALUE_BUCKETS = [(0, 50e3, "under $50k"), (50e3, 500e3, "$50k-500k"), (500e3, 5e6, "$500k-5M"),
@@ -151,8 +186,12 @@ def report(ev: pd.DataFrame, locked: bool, coverage: str) -> str:
                    [b[2] for b in VALUE_BUCKETS], h)
     years = pd.Series([str(d.year) for d in ev.date], index=ev.index)
     lines += table(ev[cluster], years[cluster], "Clusters (2+ insiders), year by year", sorted(set(years[cluster])), h)
-    lines += ["", "Next: choose the pattern that is strong (big excess, |t| > 3, 100+ events) AND steady year by",
-              "year, write it down, then run --confirm once to test it on the locked years."]
+    lines += verdict(ev)
+    if locked:
+        lines += ["(This is the exploration period the rules were chosen from, so passing here proves nothing.",
+                  " Run --confirm once for the real test on 2022 onward.)"]
+    else:
+        lines += ["This was the one test on unseen years. Do not change the rules and run it again."]
     return "\n".join(lines)
 
 
