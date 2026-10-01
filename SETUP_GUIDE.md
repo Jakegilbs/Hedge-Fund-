@@ -109,7 +109,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pytest -q
 ```
 
-Expect a line like **145 passed** with no failures. Then look at today's market data (no AI, no cost):
+Expect a line like **150 passed** with no failures. Then look at today's market data (no AI, no cost):
 
 ```bash
 python -m desk.meet_the_team --data-only
@@ -356,6 +356,22 @@ the filing became public, against SPY (large companies) or IWM (small ones).
   the stock's move before the purchase, plus clusters year by year.
 - As in Step 11, **2022 onward is locked**: pick a pattern from the exploration
   years, write it down, then run `--confirm` once.
+
+## Step 14: Support bounces and market regime (free, no AI)
+
+```bash
+python -m desk.support --scan     # today's market regime + uptrending stocks sitting at tested support
+python -m desk.support            # the study, 2016-2021 (2022+ locked)
+```
+
+The study finds every time a stock dipped back to a level that held before
+(a price floor made by earlier lows, or a rising 50/200-day average), using
+only what was visible on the chart at the time, and measures whether it
+bounced (up 2 daily ranges) or broke (closed 1 range below), plus returns vs
+SPY. Every group is compared with random days in uptrending stocks under the
+same rules. Tables split by how many times the level held, whether the stock
+was in an uptrend, the market regime (SPY above/below its 200-day average,
+calm/volatile) and year.
 
 ---
 

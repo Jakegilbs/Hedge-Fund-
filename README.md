@@ -100,6 +100,7 @@ desk/free_hand.py       free-hand fund: the AI researches and decides the whole 
 desk/insiders.py        open-market insider purchases from the SEC's quarterly Form 4 data sets (cached)
 desk/insider_study.py   insider buying study: clusters, size, who bought; 20/60/120 days vs SPY or IWM
 STRATEGY.md             the strategy under test (executive conviction buys) and its pass rules, fixed in advance
+desk/support.py         support bounce study (floors, rising 50/200-day averages), market regime, daily scan
 tests/                  offline tests with a fake Claude client
 ```
 
